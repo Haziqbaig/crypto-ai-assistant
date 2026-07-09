@@ -26,6 +26,11 @@ const App = (() => {
   const $ = (s) => document.querySelector(s);
   const viewEl = () => $('#view');
 
+  // Render token: prevents an older in-flight render from overwriting a newer view
+  let renderSeq = 0;
+  const newRender = () => ++renderSeq;
+  const isCurrent = (tok) => tok === renderSeq;
+
   function saveWatchlist() { localStorage.setItem('cs_watchlist', JSON.stringify(state.watchlist)); }
 
   function applyTheme() {
@@ -35,6 +40,7 @@ const App = (() => {
 
   /** Navigate between views. */
   function nav(view, coinId = null) {
+    newRender();
     state.view = view; state.coinId = coinId;
     document.querySelectorAll('.nav-btn').forEach(b =>
       b.classList.toggle('tab-active', b.dataset.nav === view));
@@ -56,6 +62,7 @@ const App = (() => {
 
   /* ---------------- Dashboard ---------------- */
   async function renderDashboard() {
+    const tok = renderSeq;
     viewEl().innerHTML = `<div class="grid gap-4 md:grid-cols-3">${UI.skeletonCard(3).repeat ? '' : ''}
       ${UI.skeletonCard(3)}${UI.skeletonCard(3)}${UI.skeletonCard(3)}</div>
       <div class="mt-4 grid gap-4 md:grid-cols-3">${UI.skeletonCard(6)}${UI.skeletonCard(6)}${UI.skeletonCard(6)}</div>`;
@@ -71,6 +78,7 @@ const App = (() => {
       const fng = fngR.status === 'fulfilled' ? fngR.value : [];
       const top = topR.status === 'fulfilled' ? topR.value : [];
       const trending = trendingR.status === 'fulfilled' ? trendingR.value : { coins: [] };
+      if (!isCurrent(tok)) return; // user navigated away while loading
       const cur = state.currency;
       const mcap = g ? g.total_market_cap[cur] : null;
       const mcapChange = g ? g.market_cap_change_percentage_24h_usd : null;
@@ -157,12 +165,14 @@ const App = (() => {
         </div>
       </div>`;
     } catch (e) {
+      if (!isCurrent(tok)) return;
       viewEl().innerHTML = UI.errorCard('Failed to load market data. CoinGecko may be rate-limiting.', "App.nav('dashboard')");
     }
   }
 
   /* ---------------- Watchlist ---------------- */
   async function renderWatchlist() {
+    const tok = renderSeq;
     const cur = state.currency;
     viewEl().innerHTML = `<div class="space-y-3">${UI.skeletonCard(2)}${UI.skeletonCard(8)}</div>`;
     try {
@@ -181,6 +191,7 @@ const App = (() => {
         markets = await API.binanceTickers(known);
         UI.toast('CoinGecko rate-limited — showing live Binance data');
       }
+      if (!isCurrent(tok)) return;
       const order = state.watchlist;
       markets.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 
@@ -216,6 +227,7 @@ const App = (() => {
       markets.forEach(c => { state.symbols[c.id] = c.symbol; });
       // Load indicators sequentially (Binance primary — fast; CoinGecko fallback)
       for (const c of markets) {
+        if (!isCurrent(tok)) return;
         try {
           const chart = await API.chart(c.id, c.symbol, 90, cur);
           const prices = chart.prices.map(p => p[1]);
@@ -237,6 +249,7 @@ const App = (() => {
         }
       }
     } catch (e) {
+      if (!isCurrent(tok)) return;
       viewEl().innerHTML = UI.errorCard('Failed to load watchlist.', "App.nav('watchlist')");
     }
   }
@@ -285,6 +298,7 @@ const App = (() => {
 
   /* ---------------- Coin Detail ---------------- */
   async function renderCoin(id, range) {
+    const tok = renderSeq;
     if (range) state.range = range; else state.range = '90';
     const cur = state.currency;
     viewEl().innerHTML = `<div class="space-y-4">${UI.skeletonCard(2)}${UI.skeletonCard(8)}${UI.skeletonCard(4)}</div>`;
@@ -294,6 +308,7 @@ const App = (() => {
       const [chart90, fng] = await Promise.all([
         API.chart(id, coin.symbol, 90, cur), getFng()
       ]);
+      if (!isCurrent(tok)) return;
       const prices90 = chart90.prices.map(p => p[1]);
       const vols90 = chart90.total_volumes.map(v => v[1]);
       const ind = Indicators.analyze(prices90, vols90);
@@ -387,6 +402,7 @@ const App = (() => {
         b.addEventListener('click', () => drawChart(id, b.dataset.d)));
       drawChart(id, state.range, chart90);
     } catch (e) {
+      if (!isCurrent(tok)) return;
       viewEl().innerHTML = UI.errorCard('Failed to load coin data.', `App.nav('coin','${id}')`);
     }
   }
