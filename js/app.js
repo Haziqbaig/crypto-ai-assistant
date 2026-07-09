@@ -247,19 +247,30 @@ const App = (() => {
     const fngNow = fng[0]?.v ?? null;
     for (const c of markets) {
       if (!isCurrent(tok)) return;
-      const el = document.getElementById(`${prefix}${c.id}`);
+      const key = c._key || c.id;
+      const el = document.getElementById(`${prefix}${key}`);
       if (!el) continue;
       try {
         const chart = await API.chart(c.id, c.symbol, 90, 'usd');
         const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
         const rec = Recommend.recommend(ind, fngNow);
-        const el2 = document.getElementById(`${prefix}${c.id}`);
+        const el2 = document.getElementById(`${prefix}${key}`);
         if (el2) el2.innerHTML = UI.ratingBadge(rec.rating, true);
       } catch {
-        const el2 = document.getElementById(`${prefix}${c.id}`);
+        const el2 = document.getElementById(`${prefix}${key}`);
         if (el2) el2.innerHTML = '<span class="text-[10px] text-dim">n/a</span>';
       }
     }
+  }
+
+  /** Open coin detail when we only know the ticker symbol (Coinpaprika rows). */
+  async function openBySymbol(symbol, name) {
+    try {
+      const res = await API.search(name || symbol);
+      const hit = res.coins.find(c => c.symbol.toLowerCase() === symbol.toLowerCase()) || res.coins[0];
+      if (hit) { COIN_META[hit.id] = { symbol: hit.symbol.toLowerCase(), name: hit.name }; saveCoinMeta(); nav('coin', hit.id); return; }
+    } catch {}
+    UI.toast('Could not open coin — try again shortly');
   }
 
   function mkSetPage(p) { state.mkPage = Math.max(1, p); renderMarkets(); }
@@ -270,13 +281,28 @@ const App = (() => {
     const tok = renderSeq;
     const cur = state.currency;
     viewEl().innerHTML = `<div class="space-y-3">${UI.skeletonCard(2)}${UI.skeletonCard(10)}</div>`;
+    let usedFallback = false;
     try {
-      const rows = await API.marketsPage(cur, state.mkPerPage, state.mkPage);
+      let rows;
+      try {
+        rows = await API.marketsPage(cur, state.mkPerPage, state.mkPage);
+      } catch (e) {
+        // CoinGecko rate-limited → Coinpaprika fallback (USD only)
+        rows = await API.paprikaMarkets(state.mkPerPage, state.mkPage);
+        usedFallback = true;
+      }
       if (!isCurrent(tok)) return;
-      rows.forEach(c => { COIN_META[c.id] = { symbol: c.symbol, name: c.name }; state.symbols[c.id] = c.symbol; });
+      // resolve ids: paprika rows have id=null — match by symbol against known meta
+      const symToId = Object.fromEntries(Object.entries(COIN_META).map(([id, m]) => [m.symbol, id]));
+      rows.forEach(c => {
+        if (!c.id) c.id = symToId[c.symbol] || null;
+        if (c.id) { COIN_META[c.id] = { symbol: c.symbol, name: c.name }; state.symbols[c.id] = c.symbol; }
+        c._key = c.id || ('pk_' + c.symbol); // stable DOM key even without a CoinGecko id
+      });
       saveCoinMeta();
+      if (usedFallback) UI.toast('CoinGecko rate-limited — showing Coinpaprika data');
       const tr = (c) => `
-        <tr class="border-b border-white/5 hover:bg-white/5 cursor-pointer transition" onclick="App.nav('coin','${c.id}')">
+        <tr class="border-b border-white/5 hover:bg-white/5 cursor-pointer transition" onclick="${c.id ? `App.nav('coin','${c.id}')` : `App.openBySymbol('${c.symbol}','${(c.name||'').replace(/'/g,'')}')`}">
           <td class="py-3 pl-3 pr-2 text-dim text-xs">${c.market_cap_rank ?? '—'}</td>
           <td class="py-3 pr-2"><div class="flex items-center gap-2.5 min-w-[140px]">
             <img src="${c.image}" class="w-6 h-6 rounded-full" alt="" loading="lazy">
@@ -287,7 +313,7 @@ const App = (() => {
           <td class="py-3 pr-2 text-sm text-right hidden sm:table-cell">${UI.pct(c.price_change_percentage_7d_in_currency)}</td>
           <td class="py-3 pr-2 text-sm text-head text-right hidden md:table-cell">${UI.money(c.market_cap, cur, {compact:true})}</td>
           <td class="py-3 pr-2 text-sm text-head text-right hidden lg:table-cell">${UI.money(c.total_volume, cur, {compact:true})}</td>
-          <td class="py-3 pr-3 text-right"><span id="mkr-${c.id}"><span class="skeleton inline-block h-4 w-14 align-middle"></span></span></td>
+          <td class="py-3 pr-3 text-right"><span id="mkr-${c._key || c.id}"><span class="skeleton inline-block h-4 w-14 align-middle"></span></span></td>
         </tr>`;
       const pager = `
         <div class="flex items-center justify-between flex-wrap gap-3 pt-3">
@@ -1182,7 +1208,7 @@ const App = (() => {
   function wlSetPage(p) { state.wlPage = Math.max(1, p); renderWatchlist(); }
 
   document.addEventListener('DOMContentLoaded', init);
-  return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage,
+  return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage, openBySymbol,
     pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots,
     alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter, regenInsights };
 })();

@@ -177,9 +177,40 @@ const API = (() => {
     throw lastErr || new Error('binance unavailable');
   }
 
+  /**
+   * Coinpaprika tickers → CoinGecko-markets-like rows (fallback for Markets tab).
+   * Free, keyless, generous limits. Returns top coins by rank, paged client-side.
+   */
+  async function paprikaMarkets(perPage = 25, page = 1) {
+    const cacheKey = 'paprika_tickers';
+    let all = readCache(cacheKey, 120_000);
+    if (!all) {
+      const res = await fetch('https://api.coinpaprika.com/v1/tickers?quotes=USD&limit=500');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      all = await res.json();
+      writeCache(cacheKey, all);
+    }
+    const start = (page - 1) * perPage;
+    return all.slice(start, start + perPage).map(t => ({
+      id: null, // paprika id ≠ coingecko id — use pk: prefix route
+      pk_id: t.id,
+      symbol: t.symbol.toLowerCase(),
+      name: t.name,
+      market_cap_rank: t.rank,
+      image: `https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@1a63530/128/color/${t.symbol.toLowerCase()}.png`,
+      current_price: t.quotes.USD.price,
+      price_change_percentage_24h: t.quotes.USD.percent_change_24h,
+      price_change_percentage_24h_in_currency: t.quotes.USD.percent_change_24h,
+      price_change_percentage_7d_in_currency: t.quotes.USD.percent_change_7d,
+      total_volume: t.quotes.USD.volume_24h,
+      market_cap: t.quotes.USD.market_cap,
+    }));
+  }
+
   return {
     chart,
     binanceTickers,
+    paprikaMarkets,
     /** Global market stats. */
     global: () => cachedFetch(`${CG}/global`, 'global', 120_000),
     /** Trending coins. */
