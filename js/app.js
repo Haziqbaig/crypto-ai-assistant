@@ -27,6 +27,8 @@ const App = (() => {
     pfChart: null,
   };
   function savePortfolio() { localStorage.setItem('cs_portfolio', JSON.stringify(state.portfolio)); }
+  const alertsStore = JSON.parse(localStorage.getItem('cs_alerts') || 'null') || { alerts: [], history: [], pfUp10: false, pfDown5: false, pfBase: null };
+  function saveAlerts() { localStorage.setItem('cs_alerts', JSON.stringify(alertsStore)); }
 
   const $ = (s) => document.querySelector(s);
   const viewEl = () => $('#view');
@@ -53,6 +55,7 @@ const App = (() => {
     else if (view === 'markets') renderMarkets();
     else if (view === 'watchlist') renderWatchlist();
     else if (view === 'portfolio') renderPortfolio();
+    else if (view === 'alerts') renderAlerts();
     else if (view === 'settings') renderSettings();
     else if (view === 'coin') renderCoin(coinId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -612,6 +615,170 @@ const App = (() => {
     document.getElementById('pfLots-' + coinId)?.classList.toggle('hidden');
   }
 
+  /* ---------------- Alerts ---------------- */
+  const COND_LABEL = {
+    price_above: 'Price above', price_below: 'Price below',
+    change_above: '24h % change above', rsi_above: 'RSI above', rsi_below: 'RSI below',
+  };
+  function condText(a) {
+    const t = COND_LABEL[a.cond] || a.cond;
+    const v = a.cond.startsWith('price') ? UI.money(a.threshold, 'usd') : a.threshold;
+    return `${t} ${v}`;
+  }
+
+  async function renderAlerts() {
+    newRender();
+    const tok = renderSeq;
+    const notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
+    const alertRow = (a) => `
+      <div class="glass glass-hover p-4 flex items-center gap-3 flex-wrap" id="al-${a.id}">
+        <div class="min-w-[120px]">
+          <div class="text-head font-semibold text-sm">${a.coinName}</div>
+          <div class="text-xs text-dim uppercase">${a.coinSym}</div>
+        </div>
+        <div class="text-sm text-body">${condText(a)}</div>
+        <div class="flex-1"></div>
+        ${a.triggered
+          ? `<span class="text-xs px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/25">Triggered ${a.triggeredAt ? new Date(a.triggeredAt).toLocaleString() : ''}</span>
+             <button onclick="App.alRearm('${a.id}')" class="px-3 py-1.5 rounded-lg text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">Re-arm</button>`
+          : `<span class="text-xs px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/25">Armed</span>`}
+        <button onclick="App.alRemove('${a.id}')" class="text-dim hover:text-rose-400 transition px-1 text-lg leading-none">×</button>
+      </div>`;
+
+    viewEl().innerHTML = `
+    <div class="fade-in space-y-4">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <h2 class="font-display text-xl font-bold text-head">Price Alerts</h2>
+        <div class="text-xs text-dim">Checked every 60s while the app is open</div>
+      </div>
+      ${notifState === 'default' ? `<div class="glass p-4 flex items-center gap-3 flex-wrap text-sm"><span>Enable browser notifications to get alerted even in another tab.</span><button onclick="App.alAskNotif()" class="px-3 py-1.5 rounded-lg text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">Enable notifications</button></div>` : notifState === 'denied' ? `<div class="glass p-4 text-xs text-dim">Browser notifications are blocked — you'll still get in-app toasts.</div>` : ''}
+      <div class="glass p-5">
+        <div class="font-display font-semibold text-head mb-3">New Alert</div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="relative">
+            <input id="alCoinInput" type="text" placeholder="Search coin…" autocomplete="off" class="glass !rounded-xl px-3 py-2 text-sm w-full bg-transparent text-head placeholder:text-dim outline-none focus:border-cyan-400/50">
+            <input type="hidden" id="alCoinId"><input type="hidden" id="alCoinSym"><input type="hidden" id="alCoinName">
+            <div id="alCoinResults" class="absolute left-0 mt-1 w-full glass !rounded-xl shadow-2xl z-40 hidden max-h-56 overflow-y-auto"></div>
+          </div>
+          <select id="alCond" class="glass !rounded-xl px-3 py-2 text-sm bg-transparent text-head outline-none">
+            ${Object.entries(COND_LABEL).map(([k, v]) => `<option value="${k}" class="bg-slate-900">${v}</option>`).join('')}
+          </select>
+          <input id="alThresh" type="number" step="any" placeholder="Threshold" class="glass !rounded-xl px-3 py-2 text-sm bg-transparent text-head placeholder:text-dim outline-none focus:border-cyan-400/50">
+          <button onclick="App.alAdd()" class="px-4 py-2 rounded-xl text-sm bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">+ Create alert</button>
+        </div>
+      </div>
+
+      <div class="glass p-5">
+        <div class="font-display font-semibold text-head mb-3">Portfolio Alerts</div>
+        <div class="flex gap-4 flex-wrap text-sm">
+          <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="alPfUp" ${alertsStore.pfUp10 ? 'checked' : ''} onchange="App.alPfToggle('pfUp10', this.checked)" class="accent-cyan-400"> Portfolio up 10%</label>
+          <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="alPfDown" ${alertsStore.pfDown5 ? 'checked' : ''} onchange="App.alPfToggle('pfDown5', this.checked)" class="accent-cyan-400"> Portfolio down 5%</label>
+        </div>
+        <div class="text-[11px] text-dim mt-2">Measured against portfolio value when the toggle was switched on.</div>
+      </div>
+
+      <div class="space-y-3">
+        ${alertsStore.alerts.length ? alertsStore.alerts.map(alertRow).join('') : '<div class="glass p-6 text-center text-sm text-dim">No alerts yet.</div>'}
+      </div>
+
+      <div class="glass p-5">
+        <div class="font-display font-semibold text-head mb-2">History <span class="text-xs text-dim font-normal">(last 20)</span></div>
+        ${alertsStore.history.length ? alertsStore.history.map(h => `
+          <div class="flex items-center gap-3 text-xs py-1.5 border-b border-white/5 last:border-0">
+            <span class="text-dim whitespace-nowrap">${new Date(h.t).toLocaleString()}</span>
+            <span class="text-head">${h.msg}</span>
+          </div>`).join('') : '<div class="text-xs text-dim py-2">No triggered alerts yet.</div>'}
+      </div>
+    </div>`;
+    initPfPicker('alCoinInput', 'alCoinResults');
+  }
+
+  function alAskNotif() {
+    if ('Notification' in window) Notification.requestPermission().then(() => renderAlerts());
+  }
+
+  function alAdd() {
+    const id = document.getElementById('alCoinId').value;
+    const cond = document.getElementById('alCond').value;
+    const threshold = parseFloat(document.getElementById('alThresh').value);
+    if (!id) return UI.toast('Pick a coin from the search list');
+    if (isNaN(threshold)) return UI.toast('Enter a threshold');
+    alertsStore.alerts.push({
+      id: 'al_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      coinId: id, coinSym: document.getElementById('alCoinSym').value.toUpperCase(),
+      coinName: document.getElementById('alCoinName').value, cond, threshold, triggered: false, triggeredAt: null,
+    });
+    saveAlerts(); UI.toast('Alert created'); renderAlerts();
+  }
+
+  function alRemove(id) { alertsStore.alerts = alertsStore.alerts.filter(a => a.id !== id); saveAlerts(); renderAlerts(); }
+  function alRearm(id) { const a = alertsStore.alerts.find(x => x.id === id); if (a) { a.triggered = false; a.triggeredAt = null; saveAlerts(); renderAlerts(); } }
+  function alPfToggle(key, on) {
+    alertsStore[key] = on;
+    if (on) alertsStore.pfBase = null; // will be set on next check
+    saveAlerts();
+  }
+
+  function fireAlert(msg) {
+    alertsStore.history.unshift({ t: Date.now(), msg });
+    alertsStore.history = alertsStore.history.slice(0, 20);
+    saveAlerts();
+    UI.toast('🔔 ' + msg);
+    try { if ('Notification' in window && Notification.permission === 'granted') new Notification('CryptoSage Alert', { body: msg }); } catch {}
+  }
+
+  async function checkAlerts() {
+    try {
+      const armed = alertsStore.alerts.filter(a => !a.triggered);
+      const ids = [...new Set([...armed.map(a => a.coinId), ...state.portfolio.map(l => l.coinId)])];
+      let byId = {};
+      if (ids.length) {
+        let markets;
+        try { markets = await API.markets(ids, 'usd'); }
+        catch {
+          const known = ids.filter(id => COIN_META[id]).map(id => ({ id, ...COIN_META[id] }));
+          if (!known.length) return;
+          markets = await API.binanceTickers(known);
+        }
+        byId = Object.fromEntries(markets.map(m => [m.id, m]));
+      }
+      let dirty = false;
+      for (const a of armed) {
+        const m = byId[a.coinId];
+        if (!m) continue;
+        let hit = false;
+        if (a.cond === 'price_above') hit = m.current_price > a.threshold;
+        else if (a.cond === 'price_below') hit = m.current_price < a.threshold;
+        else if (a.cond === 'change_above') hit = (m.price_change_percentage_24h ?? -Infinity) > a.threshold;
+        else if (a.cond === 'rsi_above' || a.cond === 'rsi_below') {
+          try {
+            const chart = await API.chart(a.coinId, COIN_META[a.coinId]?.symbol || m.symbol, 90, 'usd');
+            const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
+            if (ind.rsi != null) hit = a.cond === 'rsi_above' ? ind.rsi > a.threshold : ind.rsi < a.threshold;
+          } catch {}
+        }
+        if (hit) {
+          a.triggered = true; a.triggeredAt = Date.now(); dirty = true;
+          fireAlert(`${a.coinName} (${a.coinSym}): ${condText(a)} — now ${UI.money(m.current_price, 'usd')}`);
+        }
+      }
+      // portfolio alerts
+      if ((alertsStore.pfUp10 || alertsStore.pfDown5) && state.portfolio.length) {
+        let val = 0;
+        state.portfolio.forEach(l => { const m = byId[l.coinId]; if (m?.current_price != null) val += l.qty * m.current_price; });
+        if (val > 0) {
+          if (alertsStore.pfBase == null) { alertsStore.pfBase = val; dirty = true; }
+          else {
+            const chg = (val - alertsStore.pfBase) / alertsStore.pfBase * 100;
+            if (alertsStore.pfUp10 && chg >= 10) { alertsStore.pfUp10 = false; dirty = true; fireAlert(`Portfolio up ${chg.toFixed(1)}% (now ${UI.money(val, 'usd')})`); }
+            if (alertsStore.pfDown5 && chg <= -5) { alertsStore.pfDown5 = false; dirty = true; fireAlert(`Portfolio down ${Math.abs(chg).toFixed(1)}% (now ${UI.money(val, 'usd')})`); }
+          }
+        }
+      }
+      if (dirty) { saveAlerts(); if (state.view === 'alerts') renderAlerts(); }
+    } catch { /* silent — retry next tick */ }
+  }
+
   /* ---------------- Coin Detail ---------------- */
   async function renderCoin(id, range) {
     const tok = renderSeq;
@@ -841,11 +1008,14 @@ const App = (() => {
       b.addEventListener('click', () => nav(b.dataset.nav)));
     initSearch();
     nav('dashboard');
+    setTimeout(checkAlerts, 8000);
+    setInterval(checkAlerts, 60_000);
   }
 
   function wlSetPage(p) { state.wlPage = Math.max(1, p); renderWatchlist(); }
 
   document.addEventListener('DOMContentLoaded', init);
   return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage,
-    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots };
+    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots,
+    alAdd, alRemove, alRearm, alPfToggle, alAskNotif };
 })();
