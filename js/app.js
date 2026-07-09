@@ -12,6 +12,7 @@ const App = (() => {
     fng: null,
     chart: null,
     range: '90',
+    symbols: {}, // coinId → ticker symbol (for Binance chart fallback)
   };
 
   const $ = (s) => document.querySelector(s);
@@ -184,10 +185,11 @@ const App = (() => {
 
       viewEl().innerHTML = `<div class="fade-in space-y-3">${head}${rows}</div>`;
 
-      // Load indicators sequentially (rate-limit friendly)
+      markets.forEach(c => { state.symbols[c.id] = c.symbol; });
+      // Load indicators sequentially (Binance primary — fast; CoinGecko fallback)
       for (const c of markets) {
         try {
-          const chart = await API.marketChart(c.id, 90, cur);
+          const chart = await API.chart(c.id, c.symbol, 90, cur);
           const prices = chart.prices.map(p => p[1]);
           const vols = chart.total_volumes.map(v => v[1]);
           const ind = Indicators.analyze(prices, vols);
@@ -218,7 +220,7 @@ const App = (() => {
     el.innerHTML = `<div class="skeleton h-4 w-40"></div>`;
     try {
       const cur = state.currency;
-      const [chart, fngNow] = await Promise.all([API.marketChart(id, 90, cur), getFng()]);
+      const [chart, fngNow] = await Promise.all([API.chart(id, state.symbols[id], 90, cur), getFng()]);
       const prices = chart.prices.map(p => p[1]);
       const vols = chart.total_volumes.map(v => v[1]);
       const ind = Indicators.analyze(prices, vols);
@@ -259,8 +261,10 @@ const App = (() => {
     const cur = state.currency;
     viewEl().innerHTML = `<div class="space-y-4">${UI.skeletonCard(2)}${UI.skeletonCard(8)}${UI.skeletonCard(4)}</div>`;
     try {
-      const [coin, chart90, fng] = await Promise.all([
-        API.coin(id), API.marketChart(id, 90, cur), getFng()
+      const coin = await API.coin(id);
+      state.symbols[id] = coin.symbol;
+      const [chart90, fng] = await Promise.all([
+        API.chart(id, coin.symbol, 90, cur), getFng()
       ]);
       const prices90 = chart90.prices.map(p => p[1]);
       const vols90 = chart90.total_volumes.map(v => v[1]);
@@ -367,7 +371,7 @@ const App = (() => {
       b.classList.toggle('text-dim', b.dataset.d !== days);
     });
     try {
-      const data = (preloaded && days === '90') ? preloaded : await API.marketChart(id, days, state.currency);
+      const data = (preloaded && days === '90') ? preloaded : await API.chart(id, state.symbols[id], days, state.currency);
       const points = data.prices;
       const labels = points.map(p => {
         const d = new Date(p[0]);

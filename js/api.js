@@ -92,7 +92,62 @@ const API = (() => {
     });
   }
 
+  // ---- Binance public API (very generous limits: ~1200 req/min) ----
+  const BINANCE_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
+
+  /**
+   * Fetch daily/hourly klines from Binance for SYMBOLUSDT and adapt to the
+   * CoinGecko market_chart shape: { prices: [[t, close]], total_volumes: [[t, vol]] }.
+   * Not queued — Binance limits are high enough for direct calls.
+   * @param {string} symbol e.g. 'btc'
+   * @param {number} days
+   */
+  async function binanceChart(symbol, days = 90) {
+    const pair = symbol.toUpperCase() + 'USDT';
+    const interval = days <= 1 ? '1h' : '1d';
+    const limit = days <= 1 ? 24 : Math.min(days, 1000);
+    const cacheKey = `bn_${pair}_${interval}_${limit}`;
+    const ttl = days <= 1 ? 120_000 : 600_000;
+    const fresh = readCache(cacheKey, ttl);
+    if (fresh) return fresh;
+    let lastErr;
+    for (const host of BINANCE_HOSTS) {
+      try {
+        const res = await fetch(`${host}/api/v3/klines?symbol=${pair}&interval=${interval}&limit=${limit}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const k = await res.json();
+        const data = {
+          prices: k.map(r => [r[6], parseFloat(r[4])]),
+          total_volumes: k.map(r => [r[6], parseFloat(r[7])]), // quote-asset volume (USDT)
+        };
+        writeCache(cacheKey, data);
+        return data;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('binance unavailable');
+  }
+
+  /**
+   * Chart data with multi-API fallback: Binance first (USD/USDT), CoinGecko second.
+   * @param {string} id CoinGecko id
+   * @param {string|null} symbol ticker symbol (for Binance)
+   * @param {number} days
+   * @param {string} vs currency
+   */
+  async function chart(id, symbol, days = 90, vs = 'usd') {
+    if (symbol && vs === 'usd') {
+      try { return await binanceChart(symbol, days); } catch { /* fall through */ }
+    }
+    return marketChartCG(id, days, vs);
+  }
+
+  function marketChartCG(id, days = 90, vs = 'usd') {
+    return cachedFetch(`${CG}/coins/${id}/market_chart?vs_currency=${vs}&days=${days}${days > 1 ? '&interval=daily' : ''}`,
+      `chart_${id}_${vs}_${days}`, days <= 1 ? 120_000 : 600_000);
+  }
+
   return {
+    chart,
     /** Global market stats. */
     global: () => cachedFetch(`${CG}/global`, 'global', 120_000),
     /** Trending coins. */
@@ -105,10 +160,8 @@ const API = (() => {
     topMarkets: (vs = 'usd', n = 50) =>
       cachedFetch(`${CG}/coins/markets?vs_currency=${vs}&order=market_cap_desc&per_page=${n}&price_change_percentage=24h,7d`,
         `top_${vs}_${n}`, 60_000),
-    /** Daily market chart (prices, volumes) for N days. */
-    marketChart: (id, days = 90, vs = 'usd') =>
-      cachedFetch(`${CG}/coins/${id}/market_chart?vs_currency=${vs}&days=${days}${days > 1 ? '&interval=daily' : ''}`,
-        `chart_${id}_${vs}_${days}`, days <= 1 ? 120_000 : 600_000),
+    /** Daily market chart (prices, volumes) for N days — CoinGecko direct. */
+    marketChart: marketChartCG,
     /** Full coin detail. */
     coin: (id) =>
       cachedFetch(`${CG}/coins/${id}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`,
