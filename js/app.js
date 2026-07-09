@@ -23,7 +23,10 @@ const App = (() => {
     symbols: {}, // coinId → ticker symbol (for Binance chart fallback)
     mkPage: 1, mkPerPage: 25, // markets pagination
     wlPage: 1, // watchlist pagination
+    portfolio: JSON.parse(localStorage.getItem('cs_portfolio') || '[]'),
+    pfChart: null,
   };
+  function savePortfolio() { localStorage.setItem('cs_portfolio', JSON.stringify(state.portfolio)); }
 
   const $ = (s) => document.querySelector(s);
   const viewEl = () => $('#view');
@@ -49,6 +52,7 @@ const App = (() => {
     if (view === 'dashboard') renderDashboard();
     else if (view === 'markets') renderMarkets();
     else if (view === 'watchlist') renderWatchlist();
+    else if (view === 'portfolio') renderPortfolio();
     else if (view === 'settings') renderSettings();
     else if (view === 'coin') renderCoin(coinId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -404,6 +408,210 @@ const App = (() => {
     if (state.view === 'watchlist') renderWatchlist();
   }
 
+  /* ---------------- Portfolio ---------------- */
+  async function renderPortfolio() {
+    newRender();
+    const tok = renderSeq;
+    const cur = state.currency;
+    const lots = state.portfolio;
+    const addForm = `
+      <div class="glass p-5" id="pfAdd">
+        <div class="font-display font-semibold text-head mb-3">Add Holding</div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div class="relative lg:col-span-2">
+            <input id="pfCoinInput" type="text" placeholder="Search coin…" autocomplete="off" class="glass !rounded-xl px-3 py-2 text-sm w-full bg-transparent text-head placeholder:text-dim outline-none focus:border-cyan-400/50">
+            <input type="hidden" id="pfCoinId"><input type="hidden" id="pfCoinSym"><input type="hidden" id="pfCoinName">
+            <div id="pfCoinResults" class="absolute left-0 mt-1 w-full glass !rounded-xl shadow-2xl z-40 hidden max-h-56 overflow-y-auto"></div>
+          </div>
+          <input id="pfQty" type="number" step="any" min="0" placeholder="Quantity" class="glass !rounded-xl px-3 py-2 text-sm bg-transparent text-head placeholder:text-dim outline-none focus:border-cyan-400/50">
+          <input id="pfPrice" type="number" step="any" min="0" placeholder="Buy price (USD)" class="glass !rounded-xl px-3 py-2 text-sm bg-transparent text-head placeholder:text-dim outline-none focus:border-cyan-400/50">
+          <input id="pfDate" type="date" class="glass !rounded-xl px-3 py-2 text-sm bg-transparent text-head outline-none focus:border-cyan-400/50">
+        </div>
+        <button onclick="App.pfAdd()" class="mt-3 px-4 py-2 rounded-xl text-sm bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">+ Add lot</button>
+      </div>`;
+
+    if (!lots.length) {
+      viewEl().innerHTML = `<div class="fade-in space-y-4">
+        <h2 class="font-display text-xl font-bold text-head">Portfolio</h2>
+        ${addForm}
+        <div class="glass p-8 text-center text-sm text-dim">No holdings yet — add your first lot above. Data stays in your browser (localStorage).</div>
+      </div>`;
+      initPfPicker();
+      return;
+    }
+
+    viewEl().innerHTML = `<div class="space-y-3">${UI.skeletonCard(2)}${UI.skeletonCard(6)}</div>`;
+    try {
+      const ids = [...new Set(lots.map(l => l.coinId))];
+      let markets;
+      try {
+        markets = await API.markets(ids, cur);
+        markets.forEach(c => { COIN_META[c.id] = { symbol: c.symbol, name: c.name }; });
+        saveCoinMeta();
+      } catch (e) {
+        const known = ids.filter(id => COIN_META[id]).map(id => ({ id, ...COIN_META[id] }));
+        if (!known.length) throw e;
+        markets = await API.binanceTickers(known);
+        UI.toast('CoinGecko rate-limited — showing live Binance data');
+      }
+      if (!isCurrent(tok)) return;
+      const byId = Object.fromEntries(markets.map(m => [m.id, m]));
+
+      // group lots per coin
+      const groups = {};
+      lots.forEach(l => { (groups[l.coinId] = groups[l.coinId] || []).push(l); });
+      let totalVal = 0, totalCost = 0, total24h = 0;
+      const rowsData = Object.entries(groups).map(([id, ls]) => {
+        const m = byId[id];
+        const qty = ls.reduce((s, l) => s + l.qty, 0);
+        const cost = ls.reduce((s, l) => s + l.qty * l.buyPrice, 0);
+        const price = m?.current_price ?? null;
+        const value = price != null ? qty * price : 0;
+        const ch24 = m?.price_change_percentage_24h ?? null;
+        const val24 = (price != null && ch24 != null) ? value - value / (1 + ch24 / 100) : 0;
+        totalVal += value; totalCost += cost; total24h += val24;
+        return { id, m, ls, qty, cost, price, value, ch24, avg: qty ? cost / qty : 0, name: m?.name || COIN_META[id]?.name || id, sym: (m?.symbol || COIN_META[id]?.symbol || '').toUpperCase(), img: m?.image };
+      }).sort((a, b) => b.value - a.value);
+      const totalPL = totalVal - totalCost;
+      const totalPLPct = totalCost ? (totalPL / totalCost) * 100 : 0;
+
+      const holdingRow = (r) => `
+        <div class="glass glass-hover p-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <img src="${r.img || ''}" class="w-8 h-8 rounded-full cursor-pointer" onclick="App.nav('coin','${r.id}')" alt="" onerror="this.style.visibility='hidden'">
+            <div class="min-w-[110px] cursor-pointer" onclick="App.nav('coin','${r.id}')">
+              <div class="text-head font-semibold text-sm">${r.name}</div>
+              <div class="text-xs text-dim">${r.qty.toLocaleString('en-US',{maximumFractionDigits:8})} ${r.sym}</div>
+            </div>
+            <div class="min-w-[90px]"><div class="text-head text-sm">${UI.money(r.price, cur)}</div><div class="text-[10px] text-dim">Price ${r.ch24 != null ? UI.pct(r.ch24) : ''}</div></div>
+            <div class="min-w-[90px]"><div class="text-head text-sm font-medium">${UI.money(r.value, cur)}</div><div class="text-[10px] text-dim">Value · ${totalVal ? (r.value / totalVal * 100).toFixed(1) : 0}%</div></div>
+            <div class="min-w-[90px]"><div class="text-sm ${r.value - r.cost >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${UI.money(r.value - r.cost, cur)}</div><div class="text-[10px] text-dim">P/L ${r.cost ? UI.pct((r.value - r.cost) / r.cost * 100) : ''}</div></div>
+            <div class="min-w-[90px] hidden sm:block"><div class="text-head text-sm">${UI.money(r.avg, cur)}</div><div class="text-[10px] text-dim">Avg buy</div></div>
+            <div class="flex-1"></div>
+            <button onclick="App.pfToggleLots('${r.id}')" class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">${r.ls.length} lot${r.ls.length > 1 ? 's' : ''}</button>
+          </div>
+          <div id="pfLots-${r.id}" class="hidden mt-3 border-t border-white/10 pt-2 space-y-1">
+            ${r.ls.map(l => `<div class="flex items-center gap-3 text-xs py-1">
+              <span class="text-dim">${l.date || '—'}</span>
+              <span class="text-head">${l.qty} ${r.sym} @ ${UI.money(l.buyPrice, 'usd')}</span>
+              <span class="${r.price != null ? (r.price >= l.buyPrice ? 'text-emerald-400' : 'text-rose-400') : 'text-dim'}">${r.price != null ? UI.money((r.price - l.buyPrice) * l.qty, cur) : '—'}</span>
+              <span class="flex-1"></span>
+              <button onclick="App.pfEditLot('${l.id}')" class="text-dim hover:text-cyan-300">edit</button>
+              <button onclick="App.pfRemoveLot('${l.id}')" class="text-dim hover:text-rose-400">remove</button>
+            </div>`).join('')}
+          </div>
+        </div>`;
+
+      viewEl().innerHTML = `
+      <div class="fade-in space-y-4">
+        <h2 class="font-display text-xl font-bold text-head">Portfolio</h2>
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div class="glass glass-hover p-5"><div class="text-xs text-dim uppercase tracking-wider mb-1">Total Value</div>
+            <div class="font-display text-2xl font-bold text-head">${UI.money(totalVal, cur)}</div></div>
+          <div class="glass glass-hover p-5"><div class="text-xs text-dim uppercase tracking-wider mb-1">Total P/L</div>
+            <div class="font-display text-2xl font-bold ${totalPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${UI.money(totalPL, cur)}</div>
+            <div class="text-sm mt-1">${UI.pct(totalPLPct)}</div></div>
+          <div class="glass glass-hover p-5"><div class="text-xs text-dim uppercase tracking-wider mb-1">24h P/L</div>
+            <div class="font-display text-2xl font-bold ${total24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${UI.money(total24h, cur)}</div>
+            <div class="text-sm mt-1">${totalVal ? UI.pct(total24h / (totalVal - total24h) * 100) : ''}</div></div>
+        </div>
+        <div class="grid gap-4 lg:grid-cols-3">
+          <div class="lg:col-span-2 space-y-3">${rowsData.map(holdingRow).join('')}</div>
+          <div class="glass p-5"><div class="font-display font-semibold text-head mb-3">Allocation</div>
+            <div class="max-w-[260px] mx-auto"><canvas id="pfDonut"></canvas></div></div>
+        </div>
+        ${addForm}
+      </div>`;
+      initPfPicker();
+
+      // donut
+      const ctx = document.getElementById('pfDonut');
+      if (ctx && rowsData.length) {
+        if (state.pfChart) { state.pfChart.destroy(); state.pfChart = null; }
+        const palette = ['#22d3ee','#8b5cf6','#34d399','#fb923c','#f43f5e','#facc15','#60a5fa','#f472b6','#a3e635','#94a3b8'];
+        state.pfChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: { labels: rowsData.map(r => r.sym), datasets: [{ data: rowsData.map(r => r.value), backgroundColor: rowsData.map((_, i) => palette[i % palette.length]), borderWidth: 0 }] },
+          options: { plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 10, font: { size: 11 } } },
+            tooltip: { callbacks: { label: (c) => `${c.label}: ${UI.money(c.parsed, cur)} (${totalVal ? (c.parsed / totalVal * 100).toFixed(1) : 0}%)` } } }, cutout: '62%' }
+        });
+      }
+    } catch (e) {
+      if (!isCurrent(tok)) return;
+      viewEl().innerHTML = UI.errorCard('Failed to load portfolio prices.', "App.nav('portfolio')");
+    }
+  }
+
+  /** Coin search picker used by portfolio (and alerts) forms. */
+  function initPfPicker(inputId = 'pfCoinInput', resId = 'pfCoinResults') {
+    const input = document.getElementById(inputId);
+    const results = document.getElementById(resId);
+    if (!input || !results) return;
+    let t;
+    input.addEventListener('input', () => {
+      clearTimeout(t);
+      const q = input.value.trim();
+      if (q.length < 2) { results.classList.add('hidden'); return; }
+      t = setTimeout(async () => {
+        results.innerHTML = `<div class="p-3">${UI.skeleton('h-4','w-2/3')}</div>`;
+        results.classList.remove('hidden');
+        try {
+          const data = await API.search(q);
+          const coins = data.coins.slice(0, 6);
+          results.innerHTML = coins.length ? coins.map(c => `
+            <div class="flex items-center gap-2.5 px-3 py-2 hover:bg-white/5 cursor-pointer transition" onclick="App.pfPick('${c.id}','${c.symbol.toLowerCase()}','${c.name.replace(/'/g, '')}','${inputId}')">
+              <img src="${c.thumb}" class="w-5 h-5 rounded-full" alt="">
+              <div class="text-sm text-head">${c.name} <span class="text-xs text-dim uppercase">${c.symbol}</span></div>
+            </div>`).join('') : `<div class="p-3 text-sm text-dim">No results</div>`;
+        } catch { results.innerHTML = `<div class="p-3 text-sm text-rose-400">Search failed</div>`; }
+      }, 400);
+    });
+  }
+
+  function pfPick(id, sym, name, inputId = 'pfCoinInput') {
+    COIN_META[id] = { symbol: sym, name }; saveCoinMeta();
+    const prefix = inputId.replace('CoinInput', '');
+    document.getElementById(prefix + 'CoinId').value = id;
+    document.getElementById(prefix + 'CoinSym').value = sym;
+    document.getElementById(prefix + 'CoinName').value = name;
+    document.getElementById(inputId).value = `${name} (${sym.toUpperCase()})`;
+    document.getElementById(prefix + 'CoinResults').classList.add('hidden');
+  }
+
+  function pfAdd() {
+    const id = document.getElementById('pfCoinId').value;
+    const qty = parseFloat(document.getElementById('pfQty').value);
+    const price = parseFloat(document.getElementById('pfPrice').value);
+    const date = document.getElementById('pfDate').value;
+    if (!id) return UI.toast('Pick a coin from the search list');
+    if (!qty || qty <= 0) return UI.toast('Enter a valid quantity');
+    if (isNaN(price) || price < 0) return UI.toast('Enter a valid buy price');
+    state.portfolio.push({ id: 'lot_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), coinId: id, qty, buyPrice: price, date: date || new Date().toISOString().slice(0, 10) });
+    savePortfolio();
+    UI.toast('Holding added');
+    renderPortfolio();
+  }
+
+  function pfRemoveLot(lotId) {
+    state.portfolio = state.portfolio.filter(l => l.id !== lotId);
+    savePortfolio(); UI.toast('Lot removed'); renderPortfolio();
+  }
+
+  function pfEditLot(lotId) {
+    const lot = state.portfolio.find(l => l.id === lotId);
+    if (!lot) return;
+    const qty = parseFloat(prompt('Quantity:', lot.qty));
+    if (isNaN(qty) || qty <= 0) return;
+    const price = parseFloat(prompt('Buy price (USD):', lot.buyPrice));
+    if (isNaN(price) || price < 0) return;
+    lot.qty = qty; lot.buyPrice = price;
+    savePortfolio(); UI.toast('Lot updated'); renderPortfolio();
+  }
+
+  function pfToggleLots(coinId) {
+    document.getElementById('pfLots-' + coinId)?.classList.toggle('hidden');
+  }
+
   /* ---------------- Coin Detail ---------------- */
   async function renderCoin(id, range) {
     const tok = renderSeq;
@@ -638,5 +846,6 @@ const App = (() => {
   function wlSetPage(p) { state.wlPage = Math.max(1, p); renderWatchlist(); }
 
   document.addEventListener('DOMContentLoaded', init);
-  return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage };
+  return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage,
+    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots };
 })();
