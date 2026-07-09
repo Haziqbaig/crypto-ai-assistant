@@ -201,14 +201,37 @@ const App = (() => {
             <div><span class="text-dim">Trend</span> <span class="${ind.maTrend === 'up' ? 'text-emerald-400' : 'text-rose-400'}">${ind.maTrend === 'up' ? '↑ above EMA50' : '↓ below EMA50'}</span></div>
             <div class="hidden lg:block"><span class="text-dim">S/R</span> <span class="text-head">${UI.money(ind.support, cur)} / ${UI.money(ind.resistance, cur)}</span></div>
             ${UI.ratingBadge(rec.rating, true)}`;
-          await new Promise(r => setTimeout(r, 250));
         } catch {
           const el = document.getElementById(`ind-${c.id}`);
-          if (el) el.innerHTML = `<span class="text-dim text-xs">indicators unavailable (rate limit) — open coin to retry</span>`;
+          if (el) el.innerHTML = `<button onclick="App.retryIndicators('${c.id}')" class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">indicators queued — tap to retry</button>`;
         }
       }
     } catch (e) {
       viewEl().innerHTML = UI.errorCard('Failed to load watchlist.', "App.nav('watchlist')");
+    }
+  }
+
+  /** Retry loading indicators for one watchlist coin (after a rate-limit). */
+  async function retryIndicators(id) {
+    const el = document.getElementById(`ind-${id}`);
+    if (!el) return;
+    el.innerHTML = `<div class="skeleton h-4 w-40"></div>`;
+    try {
+      const cur = state.currency;
+      const [chart, fngNow] = await Promise.all([API.marketChart(id, 90, cur), getFng()]);
+      const prices = chart.prices.map(p => p[1]);
+      const vols = chart.total_volumes.map(v => v[1]);
+      const ind = Indicators.analyze(prices, vols);
+      const rec = Recommend.recommend(ind, fngNow);
+      const macdCls = ind.macd.momentum === 'bullish' ? 'text-emerald-400' : 'text-rose-400';
+      el.innerHTML = `
+        <div><span class="text-dim">RSI</span> <span class="${ind.rsi > 70 ? 'text-rose-400' : ind.rsi < 30 ? 'text-emerald-400' : 'text-head'}">${ind.rsi?.toFixed(0) ?? '—'}</span></div>
+        <div><span class="text-dim">MACD</span> <span class="${macdCls}">${ind.macd.cross !== 'none' ? ind.macd.cross + ' cross' : ind.macd.momentum}</span></div>
+        <div><span class="text-dim">Trend</span> <span class="${ind.maTrend === 'up' ? 'text-emerald-400' : 'text-rose-400'}">${ind.maTrend === 'up' ? '↑ above EMA50' : '↓ below EMA50'}</span></div>
+        <div class="hidden lg:block"><span class="text-dim">S/R</span> <span class="text-head">${UI.money(ind.support, state.currency)} / ${UI.money(ind.resistance, state.currency)}</span></div>
+        ${UI.ratingBadge(rec.rating, true)}`;
+    } catch {
+      el.innerHTML = `<button onclick="App.retryIndicators('${id}')" class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">still rate-limited — tap to retry</button>`;
     }
   }
 
@@ -457,5 +480,5 @@ const App = (() => {
   }
 
   document.addEventListener('DOMContentLoaded', init);
-  return { nav, addCoin, removeCoin };
+  return { nav, addCoin, removeCoin, retryIndicators };
 })();

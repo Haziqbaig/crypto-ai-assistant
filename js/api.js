@@ -29,8 +29,29 @@ const API = (() => {
     keys.slice(0, Math.ceil(keys.length / 2)).forEach(k => localStorage.removeItem(k));
   }
 
+  // ---- Global throttled request queue (CoinGecko free tier ≈ 5-15 req/min) ----
+  const MIN_SPACING = 2200;       // ms between CoinGecko requests
+  const RATE_LIMIT_COOLDOWN = 35_000; // wait after a 429 before next request
+  let queueTail = Promise.resolve();
+  let nextAllowedAt = 0;
+
+  /** Serialize all CoinGecko requests with min spacing + 429 cooldown. */
+  function enqueue(fn) {
+    const run = queueTail.then(async () => {
+      const wait = nextAllowedAt - Date.now();
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      return fn();
+    });
+    // keep the chain alive even on errors
+    queueTail = run.catch(() => {});
+    return run;
+  }
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
   /**
-   * Fetch JSON with cache + retry. Falls back to stale cache on failure.
+   * Fetch JSON with cache, global throttle, 429 backoff + retry.
+   * Falls back to stale cache on failure.
    * @param {string} url
    * @param {string} cacheKey
    * @param {number} ttl
@@ -38,23 +59,37 @@ const API = (() => {
   async function cachedFetch(url, cacheKey, ttl = DEFAULT_TTL) {
     const fresh = readCache(cacheKey, ttl);
     if (fresh) return fresh;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const res = await fetch(url);
-        if (res.status === 429) throw new Error('rate-limited');
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
-        writeCache(cacheKey, data);
-        return data;
-      } catch (e) {
-        if (attempt === 0) await new Promise(r => setTimeout(r, 1500));
-        else {
-          const stale = readCache(cacheKey, Infinity, true);
-          if (stale) return stale;
-          throw e;
+    return enqueue(async () => {
+      // re-check cache: an identical queued request may have already filled it
+      const again = readCache(cacheKey, ttl);
+      if (again) return again;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          const res = await fetch(url);
+          if (res.status === 429) {
+            nextAllowedAt = Date.now() + RATE_LIMIT_COOLDOWN;
+            throw new Error('rate-limited');
+          }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          writeCache(cacheKey, data);
+          nextAllowedAt = Date.now() + MIN_SPACING;
+          return data;
+        } catch (e) {
+          if (attempt < 3) {
+            // exponential-ish backoff; if rate-limited, honor the cooldown
+            const delay = e.message === 'rate-limited'
+              ? RATE_LIMIT_COOLDOWN
+              : 1500 * (attempt + 1);
+            await sleep(delay);
+          } else {
+            const stale = readCache(cacheKey, Infinity, true);
+            if (stale) return stale;
+            throw e;
+          }
         }
       }
-    }
+    });
   }
 
   return {
