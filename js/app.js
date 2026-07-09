@@ -3,6 +3,14 @@
  */
 const App = (() => {
   const DEFAULT_WATCHLIST = ['bitcoin','ethereum','solana','sui','dogecoin','chainlink','ripple','cardano'];
+  /** Known coinId → {symbol,name} (lets Binance fallback work without CoinGecko). */
+  const COIN_META = JSON.parse(localStorage.getItem('cs_coin_meta') || 'null') || {
+    bitcoin:{symbol:'btc',name:'Bitcoin'}, ethereum:{symbol:'eth',name:'Ethereum'},
+    solana:{symbol:'sol',name:'Solana'}, sui:{symbol:'sui',name:'Sui'},
+    dogecoin:{symbol:'doge',name:'Dogecoin'}, chainlink:{symbol:'link',name:'Chainlink'},
+    ripple:{symbol:'xrp',name:'XRP'}, cardano:{symbol:'ada',name:'Cardano'},
+  };
+  function saveCoinMeta() { try { localStorage.setItem('cs_coin_meta', JSON.stringify(COIN_META)); } catch {} }
   const state = {
     view: 'dashboard',
     coinId: null,
@@ -52,14 +60,21 @@ const App = (() => {
       ${UI.skeletonCard(3)}${UI.skeletonCard(3)}${UI.skeletonCard(3)}</div>
       <div class="mt-4 grid gap-4 md:grid-cols-3">${UI.skeletonCard(6)}${UI.skeletonCard(6)}${UI.skeletonCard(6)}</div>`;
     try {
-      const [global, fng, top, trending] = await Promise.all([
+      // Partial-tolerant load: each section fails independently
+      const [globalR, fngR, topR, trendingR] = await Promise.allSettled([
         API.global(), getFng(), API.topMarkets(state.currency, 50), API.trending()
       ]);
-      const g = global.data;
+      if (globalR.status === 'rejected' && topR.status === 'rejected' && fngR.status === 'rejected') {
+        throw new Error('all sources failed');
+      }
+      const g = globalR.status === 'fulfilled' ? globalR.value.data : null;
+      const fng = fngR.status === 'fulfilled' ? fngR.value : [];
+      const top = topR.status === 'fulfilled' ? topR.value : [];
+      const trending = trendingR.status === 'fulfilled' ? trendingR.value : { coins: [] };
       const cur = state.currency;
-      const mcap = g.total_market_cap[cur];
-      const mcapChange = g.market_cap_change_percentage_24h_usd;
-      const btcDom = g.market_cap_percentage.btc;
+      const mcap = g ? g.total_market_cap[cur] : null;
+      const mcapChange = g ? g.market_cap_change_percentage_24h_usd : null;
+      const btcDom = g ? g.market_cap_percentage.btc : null;
       const fngNow = fng[0] || { v: 50, label: 'Neutral' };
       const sentiment = fngNow.v <= 25 ? 'Extreme Fear' : fngNow.v <= 45 ? 'Fear' : fngNow.v <= 55 ? 'Neutral' : fngNow.v <= 75 ? 'Greed' : 'Extreme Greed';
 
@@ -100,8 +115,8 @@ const App = (() => {
           </div>
           <div class="glass glass-hover p-5">
             <div class="text-xs text-dim uppercase tracking-wider mb-1">BTC Dominance</div>
-            <div class="font-display text-2xl font-bold text-head">${btcDom.toFixed(1)}%</div>
-            <div class="text-sm mt-1 text-dim text-xs">ETH ${g.market_cap_percentage.eth?.toFixed(1) ?? '—'}%</div>
+            <div class="font-display text-2xl font-bold text-head">${btcDom != null ? btcDom.toFixed(1) + '%' : '—'}</div>
+            <div class="text-sm mt-1 text-dim text-xs">ETH ${g?.market_cap_percentage?.eth?.toFixed(1) ?? '—'}%</div>
           </div>
           <div class="glass glass-hover p-5">
             <div class="text-xs text-dim uppercase tracking-wider mb-1">Market Sentiment</div>
@@ -110,8 +125,8 @@ const App = (() => {
           </div>
           <div class="glass glass-hover p-5">
             <div class="text-xs text-dim uppercase tracking-wider mb-1">Active Coins</div>
-            <div class="font-display text-2xl font-bold text-head">${g.active_cryptocurrencies.toLocaleString()}</div>
-            <div class="text-sm mt-1 text-dim text-xs">${g.markets} markets</div>
+            <div class="font-display text-2xl font-bold text-head">${g ? g.active_cryptocurrencies.toLocaleString() : '—'}</div>
+            <div class="text-sm mt-1 text-dim text-xs">${g ? g.markets + ' markets' : 'data temporarily unavailable'}</div>
           </div>
         </div>
 
@@ -126,18 +141,18 @@ const App = (() => {
           </div>
           <div class="glass p-5">
             <div class="font-display font-semibold text-head mb-2">🚀 Top Gainers <span class="text-xs text-dim font-normal">(24h, top 50)</span></div>
-            ${gainers.map(coinRow).join('')}
+            ${gainers.length ? gainers.map(coinRow).join('') : '<div class="text-xs text-dim py-4">Temporarily unavailable — <button class="text-cyan-400 underline" onclick="App.nav(\'dashboard\')">retry</button></div>'}
           </div>
           <div class="glass p-5">
             <div class="font-display font-semibold text-head mb-2">📉 Top Losers <span class="text-xs text-dim font-normal">(24h, top 50)</span></div>
-            ${losers.map(coinRow).join('')}
+            ${losers.length ? losers.map(coinRow).join('') : '<div class="text-xs text-dim py-4">Temporarily unavailable — <button class="text-cyan-400 underline" onclick="App.nav(\'dashboard\')">retry</button></div>'}
           </div>
         </div>
 
         <div class="glass p-5">
           <div class="font-display font-semibold text-head mb-2">🔥 Trending on CoinGecko</div>
           <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-x-4">
-            ${trending.coins.slice(0, 8).map(trendRow).join('')}
+            ${trending.coins.length ? trending.coins.slice(0, 8).map(trendRow).join('') : '<div class="text-xs text-dim py-2">Temporarily unavailable</div>'}
           </div>
         </div>
       </div>`;
@@ -151,8 +166,21 @@ const App = (() => {
     const cur = state.currency;
     viewEl().innerHTML = `<div class="space-y-3">${UI.skeletonCard(2)}${UI.skeletonCard(8)}</div>`;
     try {
-      const [markets, fng] = await Promise.all([API.markets(state.watchlist, cur), getFng()]);
+      let markets;
+      const fng = await getFng().catch(() => []);
       const fngNow = fng[0]?.v ?? null;
+      try {
+        markets = await API.markets(state.watchlist, cur);
+        // remember symbol/name for future Binance fallbacks
+        markets.forEach(c => { COIN_META[c.id] = { symbol: c.symbol, name: c.name }; });
+        saveCoinMeta();
+      } catch (e) {
+        // CoinGecko down/rate-limited → Binance 24h tickers fallback
+        const known = state.watchlist.filter(id => COIN_META[id]).map(id => ({ id, ...COIN_META[id] }));
+        if (!known.length) throw e;
+        markets = await API.binanceTickers(known);
+        UI.toast('CoinGecko rate-limited — showing live Binance data');
+      }
       const order = state.watchlist;
       markets.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 

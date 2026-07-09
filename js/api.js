@@ -31,7 +31,7 @@ const API = (() => {
 
   // ---- Global throttled request queue (CoinGecko free tier ≈ 5-15 req/min) ----
   const MIN_SPACING = 2200;       // ms between CoinGecko requests
-  const RATE_LIMIT_COOLDOWN = 35_000; // wait after a 429 before next request
+  const RATE_LIMIT_COOLDOWN = 15_000; // wait after a 429 before next request
   let queueTail = Promise.resolve();
   let nextAllowedAt = 0;
 
@@ -63,7 +63,7 @@ const API = (() => {
       // re-check cache: an identical queued request may have already filled it
       const again = readCache(cacheKey, ttl);
       if (again) return again;
-      for (let attempt = 0; attempt < 4; attempt++) {
+      for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const res = await fetch(url);
           if (res.status === 429) {
@@ -76,13 +76,10 @@ const API = (() => {
           nextAllowedAt = Date.now() + MIN_SPACING;
           return data;
         } catch (e) {
-          if (attempt < 3) {
-            // exponential-ish backoff; if rate-limited, honor the cooldown
-            const delay = e.message === 'rate-limited'
-              ? RATE_LIMIT_COOLDOWN
-              : 1500 * (attempt + 1);
-            await sleep(delay);
+          if (attempt < 1 && e.message !== 'rate-limited') {
+            await sleep(1500);
           } else {
+            // fail fast to stale cache (UI has its own Binance fallbacks)
             const stale = readCache(cacheKey, Infinity, true);
             if (stale) return stale;
             throw e;
@@ -146,8 +143,43 @@ const API = (() => {
       `chart_${id}_${vs}_${days}`, days <= 1 ? 120_000 : 600_000);
   }
 
+  /**
+   * Binance 24h tickers for a set of symbols → CoinGecko-markets-like rows.
+   * Used as a fallback when CoinGecko /coins/markets is rate-limited.
+   * (No market cap / 7d data from Binance — those fields are null.)
+   * @param {Array<{id:string,symbol:string,name:string}>} coins
+   */
+  async function binanceTickers(coins) {
+    const pairs = coins.map(c => `"${c.symbol.toUpperCase()}USDT"`).join(',');
+    let lastErr;
+    for (const host of BINANCE_HOSTS) {
+      try {
+        const res = await fetch(`${host}/api/v3/ticker/24hr?symbols=[${pairs}]`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const tickers = await res.json();
+        const bySym = Object.fromEntries(tickers.map(t => [t.symbol, t]));
+        return coins.map(c => {
+          const t = bySym[c.symbol.toUpperCase() + 'USDT'];
+          if (!t) return null;
+          return {
+            id: c.id, symbol: c.symbol, name: c.name,
+            image: `https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@1a63530/128/color/${c.symbol.toLowerCase()}.png`,
+            current_price: parseFloat(t.lastPrice),
+            price_change_percentage_24h: parseFloat(t.priceChangePercent),
+            price_change_percentage_24h_in_currency: parseFloat(t.priceChangePercent),
+            price_change_percentage_7d_in_currency: null,
+            total_volume: parseFloat(t.quoteVolume),
+            market_cap: null,
+          };
+        }).filter(Boolean);
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('binance unavailable');
+  }
+
   return {
     chart,
+    binanceTickers,
     /** Global market stats. */
     global: () => cachedFetch(`${CG}/global`, 'global', 120_000),
     /** Trending coins. */
