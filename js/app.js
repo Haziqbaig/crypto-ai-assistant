@@ -56,6 +56,7 @@ const App = (() => {
     else if (view === 'watchlist') renderWatchlist();
     else if (view === 'portfolio') renderPortfolio();
     else if (view === 'alerts') renderAlerts();
+    else if (view === 'news') renderNews();
     else if (view === 'settings') renderSettings();
     else if (view === 'coin') renderCoin(coinId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -779,6 +780,113 @@ const App = (() => {
     } catch { /* silent — retry next tick */ }
   }
 
+  /* ---------------- News ---------------- */
+  const NEWS_FEEDS = [
+    { name: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
+    { name: 'Cointelegraph', url: 'https://cointelegraph.com/rss' },
+  ];
+  const NEWS_FILTERS = {
+    All: null,
+    Bitcoin: ['bitcoin', 'btc'],
+    Ethereum: ['ethereum', 'eth ', ' eth', 'vitalik'],
+    Altcoins: ['solana', 'xrp', 'ripple', 'cardano', 'ada ', 'dogecoin', 'doge', 'altcoin', 'sol ', 'bnb', 'polkadot', 'avalanche', 'litecoin'],
+    DeFi: ['defi', 'dex', 'lending', 'staking', 'yield', 'uniswap', 'aave', 'liquidity'],
+    NFT: ['nft', 'non-fungible', 'opensea', 'collectible'],
+  };
+  let newsFilter = 'All';
+
+  async function fetchFeed(feed) {
+    const cacheKey = 'cs_news_' + feed.name;
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) { const { t, d } = JSON.parse(raw); if (Date.now() - t < 600_000) return d; }
+    } catch {}
+    let items = null;
+    // primary: rss2json
+    try {
+      const res = await fetch('https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent(feed.url));
+      if (res.ok) {
+        const j = await res.json();
+        if (j.status === 'ok') items = j.items.map(i => ({ title: i.title, link: i.link, t: Date.parse(i.pubDate), source: feed.name }));
+      }
+    } catch {}
+    // fallback: allorigins + XML parse
+    if (!items) {
+      try {
+        const res = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(feed.url));
+        if (res.ok) {
+          const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+          items = [...xml.querySelectorAll('item')].map(it => ({
+            title: it.querySelector('title')?.textContent?.trim() || '',
+            link: it.querySelector('link')?.textContent?.trim() || '',
+            t: Date.parse(it.querySelector('pubDate')?.textContent || '') || Date.now(),
+            source: feed.name,
+          })).filter(i => i.title && i.link);
+        }
+      } catch {}
+    }
+    if (items) { try { localStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), d: items })); } catch {} return items; }
+    // stale fallback
+    try { const raw = localStorage.getItem(cacheKey); if (raw) return JSON.parse(raw).d; } catch {}
+    return [];
+  }
+
+  function timeAgo(t) {
+    if (!t || isNaN(t)) return '';
+    const s = Math.floor((Date.now() - t) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  function newsSetFilter(f) { newsFilter = f; renderNews(); }
+
+  async function renderNews() {
+    newRender();
+    const tok = renderSeq;
+    const chips = Object.keys(NEWS_FILTERS).map(f =>
+      `<button onclick="App.newsSetFilter('${f}')" class="px-3 py-1.5 rounded-xl text-xs border transition ${f === newsFilter ? 'tab-active' : 'border-white/10 text-dim hover:text-cyan-300'}">${f}</button>`).join('');
+    viewEl().innerHTML = `
+      <div class="space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h2 class="font-display text-xl font-bold text-head">Crypto News</h2>
+          <div class="flex gap-1.5 flex-wrap">${chips}</div>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">${UI.skeletonCard(3)}${UI.skeletonCard(3)}${UI.skeletonCard(3)}${UI.skeletonCard(3)}</div>
+      </div>`;
+    try {
+      const results = await Promise.allSettled(NEWS_FEEDS.map(fetchFeed));
+      if (!isCurrent(tok)) return;
+      let items = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+      items.sort((a, b) => b.t - a.t);
+      const kws = NEWS_FILTERS[newsFilter];
+      if (kws) items = items.filter(i => { const t = (i.title + ' ').toLowerCase(); return kws.some(k => t.includes(k)); });
+      items = items.slice(0, 40);
+      const card = (i) => `
+        <a href="${i.link}" target="_blank" rel="noopener" class="glass glass-hover p-4 block">
+          <div class="text-sm text-head font-medium leading-snug">${i.title}</div>
+          <div class="flex items-center gap-2 mt-2 text-[11px] text-dim">
+            <span class="px-2 py-0.5 rounded-md ${i.source === 'CoinDesk' ? 'bg-cyan-500/10 text-cyan-300' : 'bg-violet-500/10 text-violet-300'}">${i.source}</span>
+            <span>${timeAgo(i.t)}</span>
+          </div>
+        </a>`;
+      viewEl().innerHTML = `
+      <div class="fade-in space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h2 class="font-display text-xl font-bold text-head">Crypto News</h2>
+          <div class="flex gap-1.5 flex-wrap">${chips}</div>
+        </div>
+        ${items.length ? `<div class="grid gap-3 sm:grid-cols-2">${items.map(card).join('')}</div>`
+          : `<div class="glass p-8 text-center text-sm text-dim">No headlines${kws ? ' for ' + newsFilter : ''} right now — <button class="text-cyan-400 underline" onclick="App.nav('news')">retry</button></div>`}
+        <div class="text-[11px] text-dim">Sources: CoinDesk & Cointelegraph RSS · cached 10 min</div>
+      </div>`;
+    } catch {
+      if (!isCurrent(tok)) return;
+      viewEl().innerHTML = UI.errorCard('Failed to load news feeds.', "App.nav('news')");
+    }
+  }
+
   /* ---------------- Coin Detail ---------------- */
   async function renderCoin(id, range) {
     const tok = renderSeq;
@@ -1017,5 +1125,5 @@ const App = (() => {
   document.addEventListener('DOMContentLoaded', init);
   return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage,
     pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots,
-    alAdd, alRemove, alRearm, alPfToggle, alAskNotif };
+    alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter };
 })();
