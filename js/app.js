@@ -978,9 +978,22 @@ const App = (() => {
     if (range) state.range = range; else state.range = '90';
     const cur = state.currency;
     viewEl().innerHTML = `<div class="space-y-4">${UI.skeletonCard(2)}${UI.skeletonCard(8)}${UI.skeletonCard(4)}</div>`;
+    let coin = null;
     try {
-      const coin = await API.coin(id);
-      state.symbols[id] = coin.symbol;
+      try {
+        coin = await API.coin(id);
+        state.symbols[id] = coin.symbol;
+      } catch (e) {
+        // CoinGecko rate-limited → lite detail view from Binance chart + known meta
+        const meta = COIN_META[id];
+        if (!meta) throw e;
+        const [chartLite, fngLite] = await Promise.all([
+          API.chart(id, meta.symbol, 90, 'usd'), getFng().catch(() => [])
+        ]);
+        if (!isCurrent(tok)) return;
+        renderCoinLite(id, meta, chartLite, fngLite, tok);
+        return;
+      }
       const [chart90, fng] = await Promise.all([
         API.chart(id, coin.symbol, 90, cur), getFng()
       ]);
@@ -1077,6 +1090,73 @@ const App = (() => {
       document.querySelectorAll('.range-btn').forEach(b =>
         b.addEventListener('click', () => drawChart(id, b.dataset.d)));
       drawChart(id, state.range, chart90);
+    } catch (e) {
+      if (!isCurrent(tok)) return;
+      viewEl().innerHTML = UI.errorCard('Failed to load coin data.', `App.nav('coin','${id}')`);
+      return;
+    }
+  }
+
+  /** Lite coin view when CoinGecko is rate-limited: Binance chart + indicators + AI rec. */
+  function renderCoinLite(id, meta, chart90, fng, tok) {
+    try {
+      const cur = 'usd';
+      const prices90 = chart90.prices.map(p => p[1]);
+      const vols90 = chart90.total_volumes.map(v => v[1]);
+      const ind = Indicators.analyze(prices90, vols90);
+      const rec = Recommend.recommend(ind, fng[0]?.v ?? null);
+      const price = prices90[prices90.length - 1];
+      const sym = meta.symbol.toUpperCase();
+      const stat = (label, val) => `<div class="glass p-3.5"><div class="text-[10px] text-dim uppercase tracking-wider">${label}</div><div class="text-sm text-head font-medium mt-0.5">${val}</div></div>`;
+      viewEl().innerHTML = `
+      <div class="fade-in space-y-4">
+        <button onclick="App.nav('dashboard')" class="text-sm text-dim hover:text-cyan-300 transition">← Back</button>
+        <div class="glass p-4 text-xs text-amber-300/90 border border-amber-500/20">⚡ Lite view — CoinGecko is rate-limiting; showing live Binance data. Full stats (ATH/supply/links) will load if you retry in ~1 min.</div>
+        <div class="glass p-5 flex items-center gap-4 flex-wrap">
+          <img src="https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@1a63530/128/color/${meta.symbol.toLowerCase()}.png" onerror="this.style.display='none'" class="w-12 h-12 rounded-full" alt="">
+          <div class="mr-auto">
+            <div class="font-display text-2xl font-bold text-head">${meta.name} <span class="text-dim text-base font-normal">${sym}</span></div>
+            <div class="text-xl text-head font-medium mt-0.5">${UI.money(price, cur)}</div>
+          </div>
+          <button onclick="App.nav('coin','${id}')" class="px-4 py-2 rounded-xl text-sm bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">↻ Retry full view</button>
+        </div>
+        <div class="glass p-5">
+          <div class="font-display font-semibold text-head mb-3">Price Chart <span class="text-xs text-dim font-normal">(90d)</span></div>
+          <div class="h-72"><canvas id="priceChart"></canvas></div>
+        </div>
+        <div class="grid gap-4 lg:grid-cols-2">
+          <div class="glass p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="font-display font-semibold text-head">🤖 CryptoSage AI Recommendation</div>
+              ${UI.ratingBadge(rec.rating)}
+            </div>
+            <div class="flex gap-4 mb-3 text-sm flex-wrap">
+              <div><span class="text-dim">Confidence</span> <span class="text-head font-medium">${rec.confidence}%</span></div>
+              <div><span class="text-dim">Risk</span> <span class="text-head font-medium">${rec.risk}</span></div>
+            </div>
+            <ul class="space-y-1.5 text-sm mb-4">${rec.reasons.map(r => `<li class="flex gap-2"><span class="text-cyan-400">•</span><span>${r}</span></li>`).join('')}</ul>
+            <div class="grid grid-cols-2 gap-3 text-sm">
+              <div class="glass p-3"><div class="text-[10px] text-dim uppercase">Target</div><div class="text-emerald-400 font-medium">${UI.money(rec.target, cur)}</div></div>
+              <div class="glass p-3"><div class="text-[10px] text-dim uppercase">Stop loss</div><div class="text-rose-400 font-medium">${UI.money(rec.stopLoss, cur)}</div></div>
+            </div>
+            <div class="mt-3 text-[10px] text-dim">Rule-based technical analysis — not financial advice.</div>
+          </div>
+          <div class="glass p-5">
+            <div class="font-display font-semibold text-head mb-3">Technical Indicators <span class="text-xs text-dim font-normal">(90d daily)</span></div>
+            <div class="grid grid-cols-2 gap-3">
+              ${stat('RSI (14)', ind.rsi?.toFixed(1) ?? '—')}
+              ${stat('MACD', `<span class="${ind.macd.momentum==='bullish'?'text-emerald-400':'text-rose-400'}">${ind.macd.cross !== 'none' ? ind.macd.cross+' cross' : ind.macd.momentum}</span>`)}
+              ${stat('EMA 20', UI.money(ind.ema20, cur))}
+              ${stat('EMA 50', UI.money(ind.ema50, cur))}
+              ${stat('Support', UI.money(ind.support, cur))}
+              ${stat('Resistance', UI.money(ind.resistance, cur))}
+              ${stat('7d Momentum', (ind.mom7d>=0?'+':'')+ind.mom7d.toFixed(1)+'%')}
+              ${stat('Volume Trend', (ind.volTrend>=0?'+':'')+ind.volTrend.toFixed(1)+'%')}
+            </div>
+          </div>
+        </div>
+      </div>`;
+      drawChart(id, '90', chart90);
     } catch (e) {
       if (!isCurrent(tok)) return;
       viewEl().innerHTML = UI.errorCard('Failed to load coin data.', `App.nav('coin','${id}')`);
