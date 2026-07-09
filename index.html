@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CryptoSage AI — Smart Crypto Dashboard</title>
+<meta name="description" content="CryptoSage AI — premium crypto dashboard with technical indicators and AI-style recommendations.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: { extend: {
+    fontFamily: { sans: ['Inter','sans-serif'], display: ['"Space Grotesk"','sans-serif'] },
+    colors: { base: '#070b14', card: 'rgba(255,255,255,0.04)', accent: '#22d3ee', violet: '#8b5cf6' }
+  }}
+};
+</script>
+<style>
+  body { background: #070b14; }
+  html.light body { background: #eef2f7; }
+  .bg-mesh { background-image: radial-gradient(ellipse 60% 40% at 20% 0%, rgba(34,211,238,.12), transparent), radial-gradient(ellipse 50% 40% at 80% 10%, rgba(139,92,246,.14), transparent); }
+  html.light .bg-mesh { background-image: radial-gradient(ellipse 60% 40% at 20% 0%, rgba(34,211,238,.15), transparent), radial-gradient(ellipse 50% 40% at 80% 10%, rgba(139,92,246,.12), transparent); }
+  .glass { background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(14px); border-radius: 1rem; }
+  html.light .glass { background: rgba(255,255,255,0.75); border-color: rgba(0,0,0,0.08); }
+  .glass-hover { transition: transform .2s, border-color .2s, box-shadow .2s; }
+  .glass-hover:hover { transform: translateY(-2px); border-color: rgba(34,211,238,.35); box-shadow: 0 8px 30px rgba(34,211,238,.08); }
+  .skeleton { position: relative; overflow: hidden; background: rgba(255,255,255,.06); border-radius: .5rem; }
+  html.light .skeleton { background: rgba(0,0,0,.08); }
+  .skeleton::after { content:''; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent); animation:shimmer 1.4s infinite; }
+  @keyframes shimmer { 100% { transform: translateX(100%); } }
+  .fade-in { animation: fadeIn .35s ease both; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
+  .text-body { color: #cbd5e1; } html.light .text-body { color: #334155; }
+  .text-head { color: #f1f5f9; } html.light .text-head { color: #0f172a; }
+  .text-dim { color: #64748b; }
+  .tab-active { background: linear-gradient(135deg, rgba(34,211,238,.18), rgba(139,92,246,.18)); color: #22d3ee !important; border: 1px solid rgba(34,211,238,.3) !important; }
+  select, input { color-scheme: dark; }
+  html.light select, html.light input { color-scheme: light; }
+</style>
+</head>
+<body class="font-sans text-body min-h-screen bg-mesh">
+<div id="app" class="max-w-7xl mx-auto px-4 pb-16">
+  <!-- Header -->
+  <header class="flex flex-wrap items-center gap-3 py-5">
+    <div class="flex items-center gap-2.5 mr-auto cursor-pointer" onclick="App.nav('dashboard')">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-400 to-violet-500 flex items-center justify-center font-display font-bold text-base text-white shadow-lg shadow-cyan-500/20">S</div>
+      <div>
+        <div class="font-display font-700 font-bold text-head text-lg leading-tight">CryptoSage <span class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-violet-400">AI</span></div>
+        <div class="text-[10px] text-dim tracking-widest uppercase">Smart Crypto Intelligence</div>
+      </div>
+    </div>
+    <nav class="flex gap-1.5 order-3 sm:order-none w-full sm:w-auto">
+      <button data-nav="dashboard" class="nav-btn px-4 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Dashboard</button>
+      <button data-nav="watchlist" class="nav-btn px-4 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Watchlist</button>
+      <button data-nav="settings" class="nav-btn px-4 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Settings</button>
+    </nav>
+    <div class="relative">
+      <input id="searchInput" type="text" placeholder="Search coins…" autocomplete="off"
+        class="glass !rounded-xl px-4 py-2 text-sm w-44 sm:w-56 outline-none focus:border-cyan-400/50 bg-transparent text-head placeholder:text-dim">
+      <div id="searchResults" class="absolute right-0 mt-2 w-72 glass !rounded-xl shadow-2xl z-50 hidden max-h-80 overflow-y-auto"></div>
+    </div>
+  </header>
+
+  <main id="view"></main>
+</div>
+<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 glass px-4 py-2.5 text-sm text-head hidden z-[100]"></div>
+
+<script src="js/api.js"></script>
+<script src="js/indicators.js"></script>
+<script src="js/recommend.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
