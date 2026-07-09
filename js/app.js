@@ -174,11 +174,70 @@ const App = (() => {
             ${trending.coins.length ? trending.coins.slice(0, 8).map(trendRow).join('') : '<div class="text-xs text-dim py-2">Temporarily unavailable</div>'}
           </div>
         </div>
+
+        <div class="glass p-5" id="aiInsights">
+          <div class="flex items-center justify-between mb-2">
+            <div class="font-display font-semibold text-head">🧠 AI Insights <span class="text-xs text-dim font-normal">(rule-based)</span></div>
+            <button onclick="App.regenInsights()" class="px-3 py-1.5 rounded-lg text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">↻ Regenerate</button>
+          </div>
+          <ul id="aiInsightsList" class="space-y-1.5 text-sm"><li>${UI.skeleton('h-4','w-2/3')}</li><li>${UI.skeleton('h-4','w-1/2')}</li></ul>
+          <div class="mt-2 text-[10px] text-dim">Generated from cached market data — not financial advice.</div>
+        </div>
       </div>`;
+      renderInsights({ g, fngNow, top, tok });
     } catch (e) {
       if (!isCurrent(tok)) return;
       viewEl().innerHTML = UI.errorCard('Failed to load market data. CoinGecko may be rate-limiting.', "App.nav('dashboard')");
     }
+  }
+
+  /* ---------------- AI Insights (rule-based) ---------------- */
+  let lastInsightCtx = null;
+  async function renderInsights(ctx) {
+    if (ctx) lastInsightCtx = ctx;
+    const c = lastInsightCtx;
+    const list = document.getElementById('aiInsightsList');
+    if (!list || !c) return;
+    const bullets = [];
+    try {
+      const fng = await getFng().catch(() => []);
+      const fngNow = fng[0] || c.fngNow || null;
+      // BTC & ETH trend from cached charts (Binance-first, already cached from watchlist/coin views)
+      for (const [id, sym, label] of [['bitcoin','btc','Bitcoin'], ['ethereum','eth','Ethereum']]) {
+        try {
+          const chart = await API.chart(id, sym, 90, 'usd');
+          const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
+          const rec = Recommend.recommend(ind, fngNow?.v ?? null);
+          bullets.push(`<b>${label}</b> is trading ${ind.maTrend === 'up' ? 'above' : 'below'} its 50-day EMA with RSI ${ind.rsi?.toFixed(0) ?? '—'} and ${ind.macd.momentum} MACD momentum — rule-based rating: <b>${rec.rating}</b>.`);
+        } catch {}
+      }
+      if (fngNow?.v != null) {
+        const v = fngNow.v;
+        bullets.push(`Fear & Greed sits at <b>${v}/100 (${fngNow.label})</b> — ${v <= 25 ? 'extreme fear has historically preceded local bottoms, but confirm with trend.' : v <= 45 ? 'cautious sentiment; watch for trend confirmation before adding risk.' : v <= 55 ? 'neutral sentiment; the market lacks a strong directional bias.' : v <= 75 ? 'greed is building; consider tightening stop levels.' : 'extreme greed often marks overheated conditions — pullback risk is elevated.'}`);
+      }
+      if (c.g?.market_cap_percentage?.btc != null) {
+        const dom = c.g.market_cap_percentage.btc;
+        bullets.push(`BTC dominance is <b>${dom.toFixed(1)}%</b> — ${dom >= 55 ? 'capital is concentrated in Bitcoin; altcoins typically underperform in this regime.' : dom >= 48 ? 'a balanced regime between Bitcoin and altcoins.' : 'lower dominance favors altcoin rotation, but with higher volatility.'}`);
+      }
+      if (c.g?.market_cap_change_percentage_24h_usd != null) {
+        const mc = c.g.market_cap_change_percentage_24h_usd;
+        bullets.push(`Total crypto market cap is ${mc >= 0 ? 'up' : 'down'} <b>${Math.abs(mc).toFixed(2)}%</b> over 24h${Math.abs(mc) > 3 ? ' — an outsized move; expect elevated volatility.' : '.'}`);
+      }
+      if (Array.isArray(c.top) && c.top.length) {
+        const up = c.top.filter(x => (x.price_change_percentage_24h ?? 0) > 0).length;
+        bullets.push(`Market breadth: <b>${up}/${c.top.length}</b> of the top coins are green over 24h — ${up / c.top.length > 0.6 ? 'broad-based strength.' : up / c.top.length < 0.4 ? 'broad-based weakness.' : 'mixed breadth.'}`);
+      }
+    } catch {}
+    const list2 = document.getElementById('aiInsightsList');
+    if (!list2) return;
+    list2.innerHTML = bullets.length
+      ? bullets.map(b => `<li class="flex gap-2"><span class="text-cyan-400">•</span><span>${b}</span></li>`).join('')
+      : '<li class="text-xs text-dim">Insights unavailable right now — try Regenerate in a moment.</li>';
+  }
+  function regenInsights() {
+    const list = document.getElementById('aiInsightsList');
+    if (list) list.innerHTML = `<li>${UI.skeleton('h-4','w-2/3')}</li><li>${UI.skeleton('h-4','w-1/2')}</li>`;
+    renderInsights();
   }
 
   /* ---------------- Markets (paginated) ---------------- */
@@ -1125,5 +1184,5 @@ const App = (() => {
   document.addEventListener('DOMContentLoaded', init);
   return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage,
     pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots,
-    alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter };
+    alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter, regenInsights };
 })();
