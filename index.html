@@ -54,10 +54,11 @@ tailwind.config = {
         <div class="text-[10px] text-dim tracking-widest uppercase">Smart Crypto Intelligence</div>
       </div>
     </div>
-    <nav class="flex gap-1.5 order-3 sm:order-none w-full sm:w-auto">
-      <button data-nav="dashboard" class="nav-btn px-4 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Dashboard</button>
-      <button data-nav="watchlist" class="nav-btn px-4 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Watchlist</button>
-      <button data-nav="settings" class="nav-btn px-4 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Settings</button>
+    <nav class="flex gap-1.5 order-3 sm:order-none w-full sm:w-auto overflow-x-auto whitespace-nowrap pb-1 sm:pb-0">
+      <button data-nav="dashboard" class="nav-btn shrink-0 px-3.5 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Dashboard</button>
+      <button data-nav="markets" class="nav-btn shrink-0 px-3.5 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Markets</button>
+      <button data-nav="watchlist" class="nav-btn shrink-0 px-3.5 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Watchlist</button>
+      <button data-nav="settings" class="nav-btn shrink-0 px-3.5 py-2 rounded-xl text-sm border border-transparent text-body hover:text-cyan-300 transition">Settings</button>
     </nav>
     <div class="relative">
       <input id="searchInput" type="text" placeholder="Search coins…" autocomplete="off"

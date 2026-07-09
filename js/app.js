@@ -21,6 +21,8 @@ const App = (() => {
     chart: null,
     range: '90',
     symbols: {}, // coinId → ticker symbol (for Binance chart fallback)
+    mkPage: 1, mkPerPage: 25, // markets pagination
+    wlPage: 1, // watchlist pagination
   };
 
   const $ = (s) => document.querySelector(s);
@@ -45,6 +47,7 @@ const App = (() => {
     document.querySelectorAll('.nav-btn').forEach(b =>
       b.classList.toggle('tab-active', b.dataset.nav === view));
     if (view === 'dashboard') renderDashboard();
+    else if (view === 'markets') renderMarkets();
     else if (view === 'watchlist') renderWatchlist();
     else if (view === 'settings') renderSettings();
     else if (view === 'coin') renderCoin(coinId);
@@ -170,6 +173,97 @@ const App = (() => {
     }
   }
 
+  /* ---------------- Markets (paginated) ---------------- */
+  /** Load AI ratings lazily & sequentially for a list of market rows. */
+  async function loadRatings(markets, tok, prefix) {
+    const fng = await getFng().catch(() => []);
+    const fngNow = fng[0]?.v ?? null;
+    for (const c of markets) {
+      if (!isCurrent(tok)) return;
+      const el = document.getElementById(`${prefix}${c.id}`);
+      if (!el) continue;
+      try {
+        const chart = await API.chart(c.id, c.symbol, 90, 'usd');
+        const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
+        const rec = Recommend.recommend(ind, fngNow);
+        const el2 = document.getElementById(`${prefix}${c.id}`);
+        if (el2) el2.innerHTML = UI.ratingBadge(rec.rating, true);
+      } catch {
+        const el2 = document.getElementById(`${prefix}${c.id}`);
+        if (el2) el2.innerHTML = '<span class="text-[10px] text-dim">n/a</span>';
+      }
+    }
+  }
+
+  function mkSetPage(p) { state.mkPage = Math.max(1, p); renderMarkets(); }
+  function mkSetPerPage(n) { state.mkPerPage = +n; state.mkPage = 1; renderMarkets(); }
+
+  async function renderMarkets() {
+    newRender();
+    const tok = renderSeq;
+    const cur = state.currency;
+    viewEl().innerHTML = `<div class="space-y-3">${UI.skeletonCard(2)}${UI.skeletonCard(10)}</div>`;
+    try {
+      const rows = await API.marketsPage(cur, state.mkPerPage, state.mkPage);
+      if (!isCurrent(tok)) return;
+      rows.forEach(c => { COIN_META[c.id] = { symbol: c.symbol, name: c.name }; state.symbols[c.id] = c.symbol; });
+      saveCoinMeta();
+      const tr = (c) => `
+        <tr class="border-b border-white/5 hover:bg-white/5 cursor-pointer transition" onclick="App.nav('coin','${c.id}')">
+          <td class="py-3 pl-3 pr-2 text-dim text-xs">${c.market_cap_rank ?? '—'}</td>
+          <td class="py-3 pr-2"><div class="flex items-center gap-2.5 min-w-[140px]">
+            <img src="${c.image}" class="w-6 h-6 rounded-full" alt="" loading="lazy">
+            <div><div class="text-sm text-head font-medium">${c.name}</div><div class="text-[10px] text-dim uppercase">${c.symbol}</div></div>
+          </div></td>
+          <td class="py-3 pr-2 text-sm text-head text-right">${UI.money(c.current_price, cur)}</td>
+          <td class="py-3 pr-2 text-sm text-right">${UI.pct(c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h)}</td>
+          <td class="py-3 pr-2 text-sm text-right hidden sm:table-cell">${UI.pct(c.price_change_percentage_7d_in_currency)}</td>
+          <td class="py-3 pr-2 text-sm text-head text-right hidden md:table-cell">${UI.money(c.market_cap, cur, {compact:true})}</td>
+          <td class="py-3 pr-2 text-sm text-head text-right hidden lg:table-cell">${UI.money(c.total_volume, cur, {compact:true})}</td>
+          <td class="py-3 pr-3 text-right"><span id="mkr-${c.id}"><span class="skeleton inline-block h-4 w-14 align-middle"></span></span></td>
+        </tr>`;
+      const pager = `
+        <div class="flex items-center justify-between flex-wrap gap-3 pt-3">
+          <div class="flex items-center gap-2">
+            <button onclick="App.mkSetPage(${state.mkPage - 1})" ${state.mkPage <= 1 ? 'disabled class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-dim opacity-40"' : 'class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-body hover:text-cyan-300 transition"'}>← Prev</button>
+            <span class="text-xs text-dim px-2">Page ${state.mkPage}</span>
+            <button onclick="App.mkSetPage(${state.mkPage + 1})" class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-body hover:text-cyan-300 transition">Next →</button>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-dim">Per page
+            <select onchange="App.mkSetPerPage(this.value)" class="glass !rounded-lg px-2 py-1 bg-transparent text-head outline-none">
+              <option value="25" ${state.mkPerPage===25?'selected':''} class="bg-slate-900">25</option>
+              <option value="50" ${state.mkPerPage===50?'selected':''} class="bg-slate-900">50</option>
+            </select>
+          </div>
+        </div>`;
+      viewEl().innerHTML = `
+      <div class="fade-in space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h2 class="font-display text-xl font-bold text-head">Markets</h2>
+          <div class="text-xs text-dim">Top coins by market cap · AI ratings load per row</div>
+        </div>
+        <div class="glass overflow-x-auto">
+          <table class="w-full text-left min-w-[560px]">
+            <thead><tr class="text-[10px] text-dim uppercase tracking-wider border-b border-white/10">
+              <th class="py-2.5 pl-3 pr-2 font-medium">#</th><th class="py-2.5 pr-2 font-medium">Coin</th>
+              <th class="py-2.5 pr-2 font-medium text-right">Price</th><th class="py-2.5 pr-2 font-medium text-right">24h</th>
+              <th class="py-2.5 pr-2 font-medium text-right hidden sm:table-cell">7d</th>
+              <th class="py-2.5 pr-2 font-medium text-right hidden md:table-cell">Mkt Cap</th>
+              <th class="py-2.5 pr-2 font-medium text-right hidden lg:table-cell">Volume</th>
+              <th class="py-2.5 pr-3 font-medium text-right">AI Rating</th>
+            </tr></thead>
+            <tbody>${rows.map(tr).join('')}</tbody>
+          </table>
+        </div>
+        ${pager}
+      </div>`;
+      loadRatings(rows, tok, 'mkr-');
+    } catch (e) {
+      if (!isCurrent(tok)) return;
+      viewEl().innerHTML = UI.errorCard('Failed to load markets. CoinGecko may be rate-limiting.', "App.nav('markets')");
+    }
+  }
+
   /* ---------------- Watchlist ---------------- */
   async function renderWatchlist() {
     const tok = renderSeq;
@@ -195,11 +289,25 @@ const App = (() => {
       const order = state.watchlist;
       markets.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 
+      // Paginate if >10 coins
+      const WL_PER = 10;
+      const totalPages = Math.max(1, Math.ceil(markets.length / WL_PER));
+      if (state.wlPage > totalPages) state.wlPage = totalPages;
+      const paged = markets.length > WL_PER;
+      if (paged) markets = markets.slice((state.wlPage - 1) * WL_PER, state.wlPage * WL_PER);
+
       const head = `
         <div class="flex items-center justify-between flex-wrap gap-2">
           <h2 class="font-display text-xl font-bold text-head">Watchlist</h2>
           <div class="text-xs text-dim">Indicators load per coin • add coins via search ↗</div>
         </div>`;
+
+      const wlPager = paged ? `
+        <div class="flex items-center gap-2 justify-center pt-1">
+          <button onclick="App.wlSetPage(${state.wlPage - 1})" ${state.wlPage <= 1 ? 'disabled class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-dim opacity-40"' : 'class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-body hover:text-cyan-300 transition"'}>← Prev</button>
+          <span class="text-xs text-dim px-2">Page ${state.wlPage} / ${totalPages}</span>
+          <button onclick="App.wlSetPage(${state.wlPage + 1})" ${state.wlPage >= totalPages ? 'disabled class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-dim opacity-40"' : 'class="px-3 py-1.5 rounded-lg text-xs border border-white/10 text-body hover:text-cyan-300 transition"'}>Next →</button>
+        </div>` : '';
 
       const rows = markets.map(c => `
         <div class="glass glass-hover p-4" id="wl-${c.id}">
@@ -222,7 +330,7 @@ const App = (() => {
           </div>
         </div>`).join('');
 
-      viewEl().innerHTML = `<div class="fade-in space-y-3">${head}${rows}</div>`;
+      viewEl().innerHTML = `<div class="fade-in space-y-3">${head}${rows}${wlPager}</div>`;
 
       markets.forEach(c => { state.symbols[c.id] = c.symbol; });
       // Load indicators sequentially (Binance primary — fast; CoinGecko fallback)
@@ -527,6 +635,8 @@ const App = (() => {
     nav('dashboard');
   }
 
+  function wlSetPage(p) { state.wlPage = Math.max(1, p); renderWatchlist(); }
+
   document.addEventListener('DOMContentLoaded', init);
-  return { nav, addCoin, removeCoin, retryIndicators };
+  return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage };
 })();

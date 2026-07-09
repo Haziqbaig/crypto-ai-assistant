@@ -188,6 +188,10 @@ const API = (() => {
     markets: (ids, vs = 'usd') =>
       cachedFetch(`${CG}/coins/markets?vs_currency=${vs}&ids=${ids.join(',')}&price_change_percentage=24h,7d&sparkline=false`,
         `markets_${vs}_${ids.slice().sort().join(',')}`, 60_000),
+    /** Paginated markets page by market cap. */
+    marketsPage: (vs = 'usd', perPage = 25, page = 1) =>
+      cachedFetch(`${CG}/coins/markets?vs_currency=${vs}&order=market_cap_desc&per_page=${perPage}&page=${page}&price_change_percentage=24h,7d`,
+        `mktpage_${vs}_${perPage}_${page}`, 60_000),
     /** Top N coins by market cap. */
     topMarkets: (vs = 'usd', n = 50) =>
       cachedFetch(`${CG}/coins/markets?vs_currency=${vs}&order=market_cap_desc&per_page=${n}&price_change_percentage=24h,7d`,
