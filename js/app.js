@@ -25,6 +25,7 @@ const App = (() => {
     wlPage: 1, // watchlist pagination
     portfolio: JSON.parse(localStorage.getItem('cs_portfolio') || '[]'),
     pfChart: null,
+    recs: {}, // rowKey → last recommendation (for "why" popovers)
   };
   function savePortfolio() { localStorage.setItem('cs_portfolio', JSON.stringify(state.portfolio)); }
   const alertsStore = JSON.parse(localStorage.getItem('cs_alerts') || 'null') || { alerts: [], history: [], pfUp10: false, pfDown5: false, pfBase: null };
@@ -112,8 +113,8 @@ const App = (() => {
           <img src="${c.image}" class="w-6 h-6 rounded-full" alt="">
           <div class="flex-1 min-w-0"><div class="text-sm text-head font-medium truncate">${c.name}</div>
           <div class="text-xs text-dim uppercase">${c.symbol}</div></div>
-          <div class="text-right"><div class="text-sm text-head">${UI.money(c.current_price, cur)}</div>
-          <div class="text-xs">${UI.pct(c.price_change_percentage_24h)}</div></div>
+          <div class="text-right"><div class="text-sm text-head" ${cur==='usd' ? `data-live-price="${(c.symbol||'').toUpperCase()}USDT"` : ''}>${UI.money(c.current_price, cur)}</div>
+          <div class="text-xs" ${cur==='usd' ? `data-live-pct="${(c.symbol||'').toUpperCase()}USDT"` : ''}>${UI.pct(c.price_change_percentage_24h)}</div></div>
         </div>`;
 
       const trendRow = (t) => `
@@ -184,6 +185,7 @@ const App = (() => {
           <div class="mt-2 text-[10px] text-dim">Generated from cached market data — not financial advice.</div>
         </div>
       </div>`;
+      Live.scan();
       renderInsights({ g, fngNow, top, tok });
     } catch (e) {
       if (!isCurrent(tok)) return;
@@ -254,14 +256,48 @@ const App = (() => {
         const chart = await API.chart(c.id, c.symbol, 90, 'usd');
         const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
         const rec = Recommend.recommend(ind, fngNow);
+        state.recs[key] = { rec, name: c.name, sym: (c.symbol || '').toUpperCase() };
         const el2 = document.getElementById(`${prefix}${key}`);
-        if (el2) el2.innerHTML = UI.ratingBadge(rec.rating, true);
+        if (el2) el2.innerHTML = `<button onclick="event.stopPropagation();App.showWhy('${key}')" title="Why this rating?" class="cursor-pointer">${UI.ratingBadge(rec.rating, true)}</button>`;
       } catch {
         const el2 = document.getElementById(`${prefix}${key}`);
         if (el2) el2.innerHTML = '<span class="text-[10px] text-dim">n/a</span>';
       }
     }
   }
+
+  /** "Why this rating?" modal — shows the reasons behind a Buy/Hold/Sell badge. */
+  function showWhy(key) {
+    const entry = state.recs[key];
+    if (!entry) { UI.toast('Analysis still loading — try again in a moment'); return; }
+    const { rec, name, sym } = entry;
+    closeWhy();
+    const wrap = document.createElement('div');
+    wrap.id = 'whyModal';
+    wrap.className = 'fixed inset-0 z-[200] flex items-center justify-center p-4';
+    wrap.innerHTML = `
+      <div class="absolute inset-0 bg-black/60" onclick="App.closeWhy()"></div>
+      <div class="glass relative max-w-md w-full p-5 fade-in" style="background:rgba(13,17,28,.92)">
+        <div class="flex items-center justify-between mb-3">
+          <div class="font-display font-semibold text-head">${name} <span class="text-dim text-xs">${sym}</span></div>
+          <div class="flex items-center gap-2">${UI.ratingBadge(rec.rating)}<button onclick="App.closeWhy()" class="text-dim hover:text-rose-400 text-xl leading-none px-1">×</button></div>
+        </div>
+        <div class="flex gap-4 mb-3 text-sm flex-wrap">
+          <div><span class="text-dim">Confidence</span> <span class="text-head font-medium">${rec.confidence}%</span></div>
+          <div><span class="text-dim">Risk</span> <span class="text-head font-medium">${rec.risk}</span></div>
+          <div><span class="text-dim">Score</span> <span class="text-head font-medium">${rec.score}</span></div>
+        </div>
+        <div class="text-[10px] text-dim uppercase tracking-wider mb-1.5">Why ${rec.rating}?</div>
+        <ul class="space-y-1.5 text-sm mb-4">${rec.reasons.map(r => `<li class="flex gap-2"><span class="text-cyan-400">•</span><span>${r}</span></li>`).join('')}</ul>
+        <div class="text-xs space-y-1.5">
+          <div><span class="text-dim">Entry:</span> ${rec.entry}</div>
+          <div><span class="text-dim">Exit:</span> ${rec.exit}</div>
+        </div>
+        <div class="mt-3 text-[10px] text-dim">Rule-based technical analysis (RSI, MACD, EMAs, momentum, volume, Fear &amp; Greed) — not financial advice.</div>
+      </div>`;
+    document.body.appendChild(wrap);
+  }
+  function closeWhy() { document.getElementById('whyModal')?.remove(); }
 
   /** Open coin detail when we only know the ticker symbol (Coinpaprika rows). */
   async function openBySymbol(symbol, name) {
@@ -308,8 +344,8 @@ const App = (() => {
             <img src="${c.image}" class="w-6 h-6 rounded-full" alt="" loading="lazy">
             <div><div class="text-sm text-head font-medium">${c.name}</div><div class="text-[10px] text-dim uppercase">${c.symbol}</div></div>
           </div></td>
-          <td class="py-3 pr-2 text-sm text-head text-right">${UI.money(c.current_price, cur)}</td>
-          <td class="py-3 pr-2 text-sm text-right">${UI.pct(c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h)}</td>
+          <td class="py-3 pr-2 text-sm text-head text-right"><span ${cur==='usd' ? `data-live-price="${(c.symbol||'').toUpperCase()}USDT"` : ''}>${UI.money(c.current_price, cur)}</span></td>
+          <td class="py-3 pr-2 text-sm text-right"><span ${cur==='usd' ? `data-live-pct="${(c.symbol||'').toUpperCase()}USDT"` : ''}>${UI.pct(c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h)}</span></td>
           <td class="py-3 pr-2 text-sm text-right hidden sm:table-cell">${UI.pct(c.price_change_percentage_7d_in_currency)}</td>
           <td class="py-3 pr-2 text-sm text-head text-right hidden md:table-cell">${UI.money(c.market_cap, cur, {compact:true})}</td>
           <td class="py-3 pr-2 text-sm text-head text-right hidden lg:table-cell">${UI.money(c.total_volume, cur, {compact:true})}</td>
@@ -333,7 +369,7 @@ const App = (() => {
       <div class="fade-in space-y-3">
         <div class="flex items-center justify-between flex-wrap gap-2">
           <h2 class="font-display text-xl font-bold text-head">Markets</h2>
-          <div class="text-xs text-dim">Top coins by market cap · AI ratings load per row</div>
+          <div class="text-xs text-dim flex items-center gap-1.5"><span class="live-dot"></span> Live prices · tap a rating to see why</div>
         </div>
         <div class="glass overflow-x-auto">
           <table class="w-full text-left min-w-[560px]">
@@ -350,6 +386,7 @@ const App = (() => {
         </div>
         ${pager}
       </div>`;
+      Live.scan();
       loadRatings(rows, tok, 'mkr-');
     } catch (e) {
       if (!isCurrent(tok)) return;
@@ -410,8 +447,8 @@ const App = (() => {
               <div class="text-head font-semibold text-sm">${c.name}</div>
               <div class="text-xs text-dim uppercase">${c.symbol}</div>
             </div>
-            <div class="min-w-[90px]"><div class="text-head text-sm font-medium">${UI.money(c.current_price, cur)}</div><div class="text-[10px] text-dim">Price</div></div>
-            <div class="min-w-[70px]"><div class="text-sm">${UI.pct(c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h)}</div><div class="text-[10px] text-dim">24h</div></div>
+            <div class="min-w-[90px]"><div class="text-head text-sm font-medium" ${cur==='usd' ? `data-live-price="${(c.symbol||'').toUpperCase()}USDT"` : ''}>${UI.money(c.current_price, cur)}</div><div class="text-[10px] text-dim">Price</div></div>
+            <div class="min-w-[70px]"><div class="text-sm" ${cur==='usd' ? `data-live-pct="${(c.symbol||'').toUpperCase()}USDT"` : ''}>${UI.pct(c.price_change_percentage_24h_in_currency ?? c.price_change_percentage_24h)}</div><div class="text-[10px] text-dim">24h</div></div>
             <div class="min-w-[70px]"><div class="text-sm">${UI.pct(c.price_change_percentage_7d_in_currency)}</div><div class="text-[10px] text-dim">7d</div></div>
             <div class="min-w-[90px] hidden sm:block"><div class="text-head text-sm">${UI.money(c.total_volume, cur, {compact:true})}</div><div class="text-[10px] text-dim">Volume</div></div>
             <div class="min-w-[90px] hidden md:block"><div class="text-head text-sm">${UI.money(c.market_cap, cur, {compact:true})}</div><div class="text-[10px] text-dim">Mkt Cap</div></div>
@@ -424,6 +461,7 @@ const App = (() => {
         </div>`).join('');
 
       viewEl().innerHTML = `<div class="fade-in space-y-3">${head}${rows}${wlPager}</div>`;
+      Live.scan();
 
       markets.forEach(c => { state.symbols[c.id] = c.symbol; });
       // Load indicators sequentially (Binance primary — fast; CoinGecko fallback)
@@ -435,6 +473,7 @@ const App = (() => {
           const vols = chart.total_volumes.map(v => v[1]);
           const ind = Indicators.analyze(prices, vols);
           const rec = Recommend.recommend(ind, fngNow);
+          state.recs[c.id] = { rec, name: c.name, sym: (c.symbol || '').toUpperCase() };
           const el = document.getElementById(`ind-${c.id}`);
           if (!el) continue;
           const macdCls = ind.macd.momentum === 'bullish' ? 'text-emerald-400' : 'text-rose-400';
@@ -443,7 +482,7 @@ const App = (() => {
             <div><span class="text-dim">MACD</span> <span class="${macdCls}">${ind.macd.cross !== 'none' ? ind.macd.cross + ' cross' : ind.macd.momentum}</span></div>
             <div><span class="text-dim">Trend</span> <span class="${ind.maTrend === 'up' ? 'text-emerald-400' : 'text-rose-400'}">${ind.maTrend === 'up' ? '↑ above EMA50' : '↓ below EMA50'}</span></div>
             <div class="hidden lg:block"><span class="text-dim">S/R</span> <span class="text-head">${UI.money(ind.support, cur)} / ${UI.money(ind.resistance, cur)}</span></div>
-            ${UI.ratingBadge(rec.rating, true)}`;
+            <button onclick="App.showWhy('${c.id}')" title="Why this rating?" class="cursor-pointer">${UI.ratingBadge(rec.rating, true)}</button>`;
         } catch {
           const el = document.getElementById(`ind-${c.id}`);
           if (el) el.innerHTML = `<button onclick="App.retryIndicators('${c.id}')" class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">indicators queued — tap to retry</button>`;
@@ -467,13 +506,14 @@ const App = (() => {
       const vols = chart.total_volumes.map(v => v[1]);
       const ind = Indicators.analyze(prices, vols);
       const rec = Recommend.recommend(ind, fngNow);
+      state.recs[id] = { rec, name: COIN_META[id]?.name || id, sym: (state.symbols[id] || COIN_META[id]?.symbol || '').toUpperCase() };
       const macdCls = ind.macd.momentum === 'bullish' ? 'text-emerald-400' : 'text-rose-400';
       el.innerHTML = `
         <div><span class="text-dim">RSI</span> <span class="${ind.rsi > 70 ? 'text-rose-400' : ind.rsi < 30 ? 'text-emerald-400' : 'text-head'}">${ind.rsi?.toFixed(0) ?? '—'}</span></div>
         <div><span class="text-dim">MACD</span> <span class="${macdCls}">${ind.macd.cross !== 'none' ? ind.macd.cross + ' cross' : ind.macd.momentum}</span></div>
         <div><span class="text-dim">Trend</span> <span class="${ind.maTrend === 'up' ? 'text-emerald-400' : 'text-rose-400'}">${ind.maTrend === 'up' ? '↑ above EMA50' : '↓ below EMA50'}</span></div>
         <div class="hidden lg:block"><span class="text-dim">S/R</span> <span class="text-head">${UI.money(ind.support, state.currency)} / ${UI.money(ind.resistance, state.currency)}</span></div>
-        ${UI.ratingBadge(rec.rating, true)}`;
+        <button onclick="App.showWhy('${id}')" title="Why this rating?" class="cursor-pointer">${UI.ratingBadge(rec.rating, true)}</button>`;
     } catch {
       el.innerHTML = `<button onclick="App.retryIndicators('${id}')" class="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">still rate-limited — tap to retry</button>`;
     }
@@ -1015,7 +1055,7 @@ const App = (() => {
           <img src="${coin.image.large}" class="w-12 h-12 rounded-full" alt="">
           <div class="mr-auto">
             <div class="font-display text-2xl font-bold text-head">${coin.name} <span class="text-dim text-base font-normal">${sym} · #${coin.market_cap_rank ?? '—'}</span></div>
-            <div class="text-xl text-head font-medium mt-0.5">${UI.money(price, cur)} <span class="text-sm">${UI.pct(m.price_change_percentage_24h)}</span></div>
+            <div class="text-xl text-head font-medium mt-0.5"><span ${cur==='usd' ? `data-live-price="${sym}USDT"` : ''}>${UI.money(price, cur)}</span> <span class="text-sm" ${cur==='usd' ? `data-live-pct="${sym}USDT"` : ''}>${UI.pct(m.price_change_percentage_24h)}</span></div>
           </div>
           <button onclick="App.addCoin('${id}', '${coin.name.replace(/'/g,'')}')" class="px-4 py-2 rounded-xl text-sm bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">+ Watchlist</button>
         </div>
@@ -1089,6 +1129,7 @@ const App = (() => {
 
       document.querySelectorAll('.range-btn').forEach(b =>
         b.addEventListener('click', () => drawChart(id, b.dataset.d)));
+      Live.scan();
       drawChart(id, state.range, chart90);
     } catch (e) {
       if (!isCurrent(tok)) return;
@@ -1289,6 +1330,6 @@ const App = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
   return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage, openBySymbol,
-    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots,
+    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots, showWhy, closeWhy,
     alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter, regenInsights };
 })();

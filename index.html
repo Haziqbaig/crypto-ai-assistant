@@ -32,6 +32,12 @@ tailwind.config = {
   .skeleton::after { content:''; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent); animation:shimmer 1.4s infinite; }
   @keyframes shimmer { 100% { transform: translateX(100%); } }
   .fade-in { animation: fadeIn .35s ease both; }
+  .flash-up { animation: flashUp 1.2s ease; }
+  .flash-down { animation: flashDown 1.2s ease; }
+  @keyframes flashUp { 0% { color: #34d399; text-shadow: 0 0 12px rgba(52,211,153,.5); } }
+  @keyframes flashDown { 0% { color: #f43f5e; text-shadow: 0 0 12px rgba(244,63,94,.5); } }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; display: inline-block; animation: livePulse 2s infinite; }
+  @keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
   @keyframes fadeIn { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
@@ -78,6 +84,7 @@ tailwind.config = {
 <script src="js/indicators.js"></script>
 <script src="js/recommend.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/live.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
