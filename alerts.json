@@ -1,0 +1,11 @@
+{
+  "_comment": "24/7 price alerts checked by GitHub Actions (.github/workflows/price-alerts.yml). Edit this file, commit, done. symbol = Binance ticker (BTC, ETH, SOL...). cond = price_above | price_below | change_above | change_below (24h %). Set 'email' to where notifications go.",
+  "email": "YOUR_EMAIL_HERE@example.com",
+  "alerts": [
+    { "id": "btc-below-100k", "symbol": "BTC", "cond": "price_below", "threshold": 100000 },
+    { "id": "btc-above-130k", "symbol": "BTC", "cond": "price_above", "threshold": 130000 },
+    { "id": "eth-below-3k", "symbol": "ETH", "cond": "price_below", "threshold": 3000 },
+    { "id": "sol-drop-8pct", "symbol": "SOL", "cond": "change_below", "threshold": -8 }
+  ],
+  "rearmAfterHours": 24
+}
