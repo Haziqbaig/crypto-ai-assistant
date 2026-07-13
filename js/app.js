@@ -29,7 +29,7 @@ const App = (() => {
     recs: {}, // rowKey → last recommendation (for "why" popovers)
   };
   function savePortfolio() { localStorage.setItem('cs_portfolio', JSON.stringify(state.portfolio)); }
-  const alertsStore = JSON.parse(localStorage.getItem('cs_alerts') || 'null') || { alerts: [], history: [], pfUp10: false, pfDown5: false, pfBase: null };
+  const alertsStore = JSON.parse(localStorage.getItem('cs_alerts') || 'null') || { alerts: [], history: [], pfUp10: false, pfDown5: false, pfBase: null, email: '', emailOn: false };
   function saveAlerts() { localStorage.setItem('cs_alerts', JSON.stringify(alertsStore)); }
 
   const $ = (s) => document.querySelector(s);
@@ -796,6 +796,17 @@ const App = (() => {
       </div>
 
       <div class="glass p-5">
+        <div class="font-display font-semibold text-head mb-3">📧 Email Notifications</div>
+        <div class="grid gap-3 sm:grid-cols-[1fr_auto_auto] items-center">
+          <input id="alEmail" type="email" placeholder="you@example.com" value="${alertsStore.email || ''}" class="glass !rounded-xl px-3 py-2 text-sm bg-transparent text-head placeholder:text-dim outline-none focus:border-cyan-400/50">
+          <button onclick="App.alEmailSave()" class="px-4 py-2 rounded-xl text-sm bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition">Save</button>
+          <label class="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" ${alertsStore.emailOn ? 'checked' : ''} onchange="App.alEmailToggle(this.checked)" class="accent-cyan-400"> Enabled</label>
+        </div>
+        <div class="text-[11px] text-dim mt-2">When an alert triggers, an email is sent via FormSubmit (free relay). <b>First time only:</b> FormSubmit sends you a confirmation email — click its activation link once, and all future alerts arrive automatically. Alerts are checked every 60s <b>while the app is open in a tab</b> (a static site can't check prices when closed).</div>
+        <button onclick="App.alEmailTest()" class="mt-2 px-3 py-1.5 rounded-lg text-xs border border-white/10 text-body hover:text-cyan-300 transition">Send test email</button>
+      </div>
+
+      <div class="glass p-5">
         <div class="font-display font-semibold text-head mb-3">Portfolio Alerts</div>
         <div class="flex gap-4 flex-wrap text-sm">
           <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="alPfUp" ${alertsStore.pfUp10 ? 'checked' : ''} onchange="App.alPfToggle('pfUp10', this.checked)" class="accent-cyan-400"> Portfolio up 10%</label>
@@ -852,6 +863,47 @@ const App = (() => {
     saveAlerts();
     UI.toast('🔔 ' + msg);
     try { if ('Notification' in window && Notification.permission === 'granted') new Notification('CryptoSage Alert', { body: msg }); } catch {}
+    sendAlertEmail('CryptoSage Alert', msg);
+  }
+
+  /** Send an alert email via FormSubmit's AJAX relay (free, keyless). */
+  async function sendAlertEmail(subject, msg) {
+    if (!alertsStore.emailOn || !alertsStore.email) return;
+    try {
+      const res = await fetch('https://formsubmit.co/ajax/' + encodeURIComponent(alertsStore.email), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          _subject: subject,
+          _template: 'box',
+          _captcha: 'false',
+          alert: msg,
+          time: new Date().toLocaleString(),
+          from: 'CryptoSage AI dashboard',
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.success === 'false' || d.success === false) throw new Error(d.message || 'send failed');
+    } catch (e) {
+      UI.toast('⚠️ Email send failed — check address / FormSubmit activation');
+    }
+  }
+
+  function alEmailSave() {
+    const v = (document.getElementById('alEmail')?.value || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return UI.toast('Enter a valid email address');
+    alertsStore.email = v; saveAlerts(); UI.toast('Email saved');
+  }
+  function alEmailToggle(on) {
+    alertsStore.emailOn = on; saveAlerts();
+    UI.toast(on ? 'Email alerts enabled' : 'Email alerts disabled');
+  }
+  async function alEmailTest() {
+    if (!alertsStore.email) return UI.toast('Save your email first');
+    if (!alertsStore.emailOn) return UI.toast('Enable email alerts first');
+    UI.toast('Sending test email…');
+    await sendAlertEmail('CryptoSage test email', 'This is a test alert from your CryptoSage AI dashboard. If you received this, email alerts are working! 🎉');
+    UI.toast('Test sent — check your inbox (and spam folder). First time? Click the FormSubmit activation link.');
   }
 
   async function checkAlerts() {
@@ -1389,5 +1441,5 @@ const App = (() => {
   document.addEventListener('DOMContentLoaded', init);
   return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage, openBySymbol,
     pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots, showWhy, closeWhy, setChartType,
-    alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter, regenInsights };
+    alAdd, alRemove, alRearm, alPfToggle, alAskNotif, alEmailSave, alEmailToggle, alEmailTest, newsSetFilter, regenInsights };
 })();
