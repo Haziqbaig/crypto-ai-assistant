@@ -103,7 +103,7 @@ const API = (() => {
     const pair = symbol.toUpperCase() + 'USDT';
     const interval = days <= 1 ? '1h' : '1d';
     const limit = days <= 1 ? 24 : Math.min(days, 1000);
-    const cacheKey = `bn_${pair}_${interval}_${limit}`;
+    const cacheKey = `bn2_${pair}_${interval}_${limit}`;
     const ttl = days <= 1 ? 120_000 : 600_000;
     const fresh = readCache(cacheKey, ttl);
     if (fresh) return fresh;
@@ -116,6 +116,7 @@ const API = (() => {
         const data = {
           prices: k.map(r => [r[6], parseFloat(r[4])]),
           total_volumes: k.map(r => [r[6], parseFloat(r[7])]), // quote-asset volume (USDT)
+          candles: k.map(r => ({ t: r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4] })), // OHLC for candlestick charts
         };
         writeCache(cacheKey, data);
         return data;
@@ -136,6 +137,14 @@ const API = (() => {
       try { return await binanceChart(symbol, days); } catch { /* fall through */ }
     }
     return marketChartCG(id, days, vs);
+  }
+
+  /** CoinGecko OHLC (fallback candles when Binance lacks the pair). */
+  async function ohlcCG(id, days = 90, vs = 'usd') {
+    const d = days <= 1 ? 1 : days <= 7 ? 7 : days <= 30 ? 30 : days <= 90 ? 90 : 365;
+    const raw = await cachedFetch(`${CG}/coins/${id}/ohlc?vs_currency=${vs}&days=${d}`,
+      `ohlc_${id}_${vs}_${d}`, d <= 1 ? 120_000 : 600_000);
+    return raw.map(r => ({ t: r[0], o: r[1], h: r[2], l: r[3], c: r[4] }));
   }
 
   function marketChartCG(id, days = 90, vs = 'usd') {
@@ -209,6 +218,7 @@ const API = (() => {
 
   return {
     chart,
+    ohlcCG,
     binanceTickers,
     paprikaMarkets,
     /** Global market stats. */

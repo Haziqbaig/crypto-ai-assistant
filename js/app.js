@@ -23,6 +23,7 @@ const App = (() => {
     symbols: {}, // coinId → ticker symbol (for Binance chart fallback)
     mkPage: 1, mkPerPage: 25, // markets pagination
     wlPage: 1, // watchlist pagination
+    chartType: localStorage.getItem('cs_chart_type') || 'candles', // 'candles' | 'line'
     portfolio: JSON.parse(localStorage.getItem('cs_portfolio') || '[]'),
     pfChart: null,
     recs: {}, // rowKey → last recommendation (for "why" popovers)
@@ -1063,7 +1064,10 @@ const App = (() => {
         <div class="glass p-5">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
             <div class="font-display font-semibold text-head">Price Chart</div>
-            <div class="flex gap-1.5" id="rangeBtns">
+            <div class="flex gap-1.5 items-center flex-wrap" id="rangeBtns">
+              <button onclick="App.setChartType('candles')" id="ctCandles" class="px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.chartType==='candles'?'tab-active':'text-dim hover:text-cyan-300'} transition">🕯 Candles</button>
+              <button onclick="App.setChartType('line')" id="ctLine" class="px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.chartType==='line'?'tab-active':'text-dim hover:text-cyan-300'} transition">≈ Line</button>
+              <span class="w-px h-5 bg-white/10 mx-1"></span>
               ${['1','7','30','90','365'].map(d => `<button data-d="${d}" class="range-btn px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.range===d?'tab-active':'text-dim hover:text-cyan-300'} transition">${d==='1'?'24h':d==='365'?'1y':d+'d'}</button>`).join('')}
             </div>
           </div>
@@ -1204,7 +1208,18 @@ const App = (() => {
     }
   }
 
-  /** Render Chart.js price line for a coin & range. */
+  /** Toggle between candlestick and line chart. */
+  function setChartType(t) {
+    state.chartType = t;
+    localStorage.setItem('cs_chart_type', t);
+    document.getElementById('ctCandles')?.classList.toggle('tab-active', t === 'candles');
+    document.getElementById('ctCandles')?.classList.toggle('text-dim', t !== 'candles');
+    document.getElementById('ctLine')?.classList.toggle('tab-active', t === 'line');
+    document.getElementById('ctLine')?.classList.toggle('text-dim', t !== 'line');
+    if (state.coinId) drawChart(state.coinId, state.range);
+  }
+
+  /** Render Chart.js price chart (candlestick or line) for a coin & range. */
   async function drawChart(id, days, preloaded = null) {
     state.range = days;
     document.querySelectorAll('.range-btn').forEach(b => {
@@ -1213,6 +1228,50 @@ const App = (() => {
     });
     try {
       const data = (preloaded && days === '90') ? preloaded : await API.chart(id, state.symbols[id], days, state.currency);
+      const ctx = document.getElementById('priceChart');
+      if (!ctx) return;
+
+      // ---- Candles: from Binance klines, or CoinGecko OHLC fallback ----
+      let candles = data.candles || null;
+      if (state.chartType === 'candles' && !candles) {
+        try { candles = await API.ohlcCG(id, +days, state.currency); } catch { /* fall back to line */ }
+      }
+
+      if (state.chartType === 'candles' && candles && candles.length) {
+        const fmtT = (t) => {
+          const d = new Date(t);
+          return days === '1' ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {month:'short',day:'numeric'});
+        };
+        const labels = candles.map(c => fmtT(c.t));
+        const bodies = candles.map(c => [c.o, c.c]);
+        const wicks = candles.map(c => [c.l, c.h]);
+        const colors = candles.map(c => c.c >= c.o ? 'rgba(52,211,153,.9)' : 'rgba(244,63,94,.9)');
+        const wickColors = candles.map(c => c.c >= c.o ? 'rgba(52,211,153,.45)' : 'rgba(244,63,94,.45)');
+        if (state.chart) state.chart.destroy();
+        state.chart = new Chart(ctx, {
+          type: 'bar',
+          data: { labels, datasets: [
+            { data: wicks, backgroundColor: wickColors, barPercentage: 0.14, categoryPercentage: 1, borderWidth: 0, grouped: false, order: 2 },
+            { data: bodies, backgroundColor: colors, barPercentage: 0.72, categoryPercentage: 1, borderWidth: 0, borderRadius: 1, grouped: false, order: 1, minBarLength: 2 },
+          ]},
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, filter: (i) => i.datasetIndex === 1,
+              callbacks: { label: (c) => {
+                const k = candles[c.dataIndex];
+                return [`O ${UI.money(k.o, state.currency)}  H ${UI.money(k.h, state.currency)}`, `L ${UI.money(k.l, state.currency)}  C ${UI.money(k.c, state.currency)}`];
+              } } } },
+            scales: {
+              x: { stacked: false, grid: { display: false }, ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 10 } } },
+              y: { beginAtZero: false, grid: { color: 'rgba(148,163,184,.08)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => UI.money(v, state.currency, {compact:true}) } }
+            },
+            interaction: { mode: 'index', intersect: false }
+          }
+        });
+        return;
+      }
+
+      // ---- Line chart ----
       const points = data.prices;
       const labels = points.map(p => {
         const d = new Date(p[0]);
@@ -1220,8 +1279,6 @@ const App = (() => {
       });
       const values = points.map(p => p[1]);
       const up = values[values.length-1] >= values[0];
-      const ctx = document.getElementById('priceChart');
-      if (!ctx) return;
       if (state.chart) state.chart.destroy();
       const grad = ctx.getContext('2d').createLinearGradient(0, 0, 0, 280);
       grad.addColorStop(0, up ? 'rgba(52,211,153,.25)' : 'rgba(244,63,94,.22)');
@@ -1330,6 +1387,6 @@ const App = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
   return { nav, addCoin, removeCoin, retryIndicators, mkSetPage, mkSetPerPage, wlSetPage, openBySymbol,
-    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots, showWhy, closeWhy,
+    pfPick, pfAdd, pfRemoveLot, pfEditLot, pfToggleLots, showWhy, closeWhy, setChartType,
     alAdd, alRemove, alRearm, alPfToggle, alAskNotif, newsSetFilter, regenInsights };
 })();
