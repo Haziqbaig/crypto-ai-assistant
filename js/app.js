@@ -1068,7 +1068,7 @@ const App = (() => {
               <button onclick="App.setChartType('candles')" id="ctCandles" class="px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.chartType==='candles'?'tab-active':'text-dim hover:text-cyan-300'} transition">🕯 Candles</button>
               <button onclick="App.setChartType('line')" id="ctLine" class="px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.chartType==='line'?'tab-active':'text-dim hover:text-cyan-300'} transition">≈ Line</button>
               <span class="w-px h-5 bg-white/10 mx-1"></span>
-              ${['1','7','30','90','365'].map(d => `<button data-d="${d}" class="range-btn px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.range===d?'tab-active':'text-dim hover:text-cyan-300'} transition">${d==='1'?'24h':d==='365'?'1y':d+'d'}</button>`).join('')}
+              ${['1h','4h','12h','1','7','30','90','365'].map(d => `<button data-d="${d}" class="range-btn px-3 py-1.5 rounded-lg text-xs border border-transparent ${state.range===d?'tab-active':'text-dim hover:text-cyan-300'} transition">${d==='1'?'24h':d==='365'?'1y':d.endsWith('h')?d:d+'d'}</button>`).join('')}
             </div>
           </div>
           <div class="h-72"><canvas id="priceChart"></canvas></div>
@@ -1231,16 +1231,17 @@ const App = (() => {
       const ctx = document.getElementById('priceChart');
       if (!ctx) return;
 
+      const intraday = typeof days === 'string' && days.endsWith('h');
       // ---- Candles: from Binance klines, or CoinGecko OHLC fallback ----
       let candles = data.candles || null;
       if (state.chartType === 'candles' && !candles) {
-        try { candles = await API.ohlcCG(id, +days, state.currency); } catch { /* fall back to line */ }
+        try { candles = await API.ohlcCG(id, intraday ? 1 : +days, state.currency); } catch { /* fall back to line */ }
       }
 
       if (state.chartType === 'candles' && candles && candles.length) {
         const fmtT = (t) => {
           const d = new Date(t);
-          return days === '1' ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {month:'short',day:'numeric'});
+          return (days === '1' || intraday) ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {month:'short',day:'numeric'});
         };
         const labels = candles.map(c => fmtT(c.t));
         const bodies = candles.map(c => [c.o, c.c]);
@@ -1275,7 +1276,7 @@ const App = (() => {
       const points = data.prices;
       const labels = points.map(p => {
         const d = new Date(p[0]);
-        return days === '1' ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {month:'short',day:'numeric'});
+        return (days === '1' || intraday) ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {month:'short',day:'numeric'});
       });
       const values = points.map(p => p[1]);
       const up = values[values.length-1] >= values[0];

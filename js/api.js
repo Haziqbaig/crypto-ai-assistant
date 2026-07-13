@@ -101,12 +101,22 @@ const API = (() => {
    */
   async function binanceChart(symbol, days = 90) {
     const pair = symbol.toUpperCase() + 'USDT';
-    const interval = days <= 1 ? '1h' : '1d';
-    const limit = days <= 1 ? 24 : Math.min(days, 1000);
+    // Intraday string ranges: '1h' → 1m candles, '4h' → 5m, '12h' → 15m
+    let interval, limit, ttl;
+    if (typeof days === 'string' && days.endsWith('h')) {
+      const h = parseInt(days, 10) || 1;
+      if (h <= 1) { interval = '1m'; limit = 60; }
+      else if (h <= 4) { interval = '5m'; limit = 48; }
+      else { interval = '15m'; limit = Math.min(Math.ceil(h * 4), 96); }
+      ttl = 55_000;
+    } else {
+      interval = days <= 1 ? '1h' : '1d';
+      limit = days <= 1 ? 24 : Math.min(days, 1000);
+      ttl = days <= 1 ? 120_000 : 600_000;
+    }
     const cacheKey = `bn2_${pair}_${interval}_${limit}`;
-    const ttl = days <= 1 ? 120_000 : 600_000;
-    const fresh = readCache(cacheKey, ttl);
-    if (fresh) return fresh;
+    const fresh2 = readCache(cacheKey, ttl);
+    if (fresh2) return fresh2;
     let lastErr;
     for (const host of BINANCE_HOSTS) {
       try {
@@ -136,7 +146,9 @@ const API = (() => {
     if (symbol && vs === 'usd') {
       try { return await binanceChart(symbol, days); } catch { /* fall through */ }
     }
-    return marketChartCG(id, days, vs);
+    // CoinGecko has no minute-level endpoint on the free tier — use 1-day (5-min points)
+    const cgDays = (typeof days === 'string' && days.endsWith('h')) ? 1 : days;
+    return marketChartCG(id, cgDays, vs);
   }
 
   /** CoinGecko OHLC (fallback candles when Binance lacks the pair). */
