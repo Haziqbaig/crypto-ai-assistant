@@ -90,7 +90,16 @@ const API = (() => {
   }
 
   // ---- Binance public API (very generous limits: ~1200 req/min) ----
-  const BINANCE_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
+  // NOTE: api.binance.com returns HTTP 451 in geo-restricted regions (US + others),
+  // so the keyless data-api.binance.vision mirror is tried FIRST for reliability.
+  // Hosts that return 451 are remembered for the session and skipped thereafter.
+  const BINANCE_HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
+  const blockedHosts = new Set();
+  /** Hosts to try this session, blocked (451) ones moved to the back / skipped. */
+  function liveHosts() {
+    const ok = BINANCE_HOSTS.filter(h => !blockedHosts.has(h));
+    return ok.length ? ok : BINANCE_HOSTS; // never end up with zero hosts
+  }
 
   /**
    * Fetch daily/hourly klines from Binance for SYMBOLUSDT and adapt to the
@@ -118,9 +127,10 @@ const API = (() => {
     const fresh2 = readCache(cacheKey, ttl);
     if (fresh2) return fresh2;
     let lastErr;
-    for (const host of BINANCE_HOSTS) {
+    for (const host of liveHosts()) {
       try {
         const res = await fetch(`${host}/api/v3/klines?symbol=${pair}&interval=${interval}&limit=${limit}`);
+        if (res.status === 451) { blockedHosts.add(host); throw new Error('HTTP 451 (geo-blocked)'); }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const k = await res.json();
         const data = {
@@ -173,9 +183,10 @@ const API = (() => {
   async function binanceTickers(coins) {
     const pairs = coins.map(c => `"${c.symbol.toUpperCase()}USDT"`).join(',');
     let lastErr;
-    for (const host of BINANCE_HOSTS) {
+    for (const host of liveHosts()) {
       try {
         const res = await fetch(`${host}/api/v3/ticker/24hr?symbols=[${pairs}]`);
+        if (res.status === 451) { blockedHosts.add(host); throw new Error('HTTP 451 (geo-blocked)'); }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const tickers = await res.json();
         const bySym = Object.fromEntries(tickers.map(t => [t.symbol, t]));

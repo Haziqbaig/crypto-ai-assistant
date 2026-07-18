@@ -3,6 +3,9 @@
  */
 const App = (() => {
   const DEFAULT_WATCHLIST = ['bitcoin','ethereum','solana','sui','dogecoin','chainlink','ripple','cardano'];
+  // Lookback (days) for indicator analysis. 220 ensures EMA200 has enough data to populate
+  // (EMA200 needs 200 closes); the visible price chart still uses the user-selected range.
+  const IND_DAYS = 220;
   /** Known coinId → {symbol,name} (lets Binance fallback work without CoinGecko). */
   const COIN_META = JSON.parse(localStorage.getItem('cs_coin_meta') || 'null') || {
     bitcoin:{symbol:'btc',name:'Bitcoin'}, ethereum:{symbol:'eth',name:'Ethereum'},
@@ -208,7 +211,7 @@ const App = (() => {
       // BTC & ETH trend from cached charts (Binance-first, already cached from watchlist/coin views)
       for (const [id, sym, label] of [['bitcoin','btc','Bitcoin'], ['ethereum','eth','Ethereum']]) {
         try {
-          const chart = await API.chart(id, sym, 90, 'usd');
+          const chart = await API.chart(id, sym, IND_DAYS, 'usd');
           const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
           const rec = Recommend.recommend(ind, fngNow?.v ?? null);
           bullets.push(`<b>${label}</b> is trading ${ind.maTrend === 'up' ? 'above' : 'below'} its 50-day EMA with RSI ${ind.rsi?.toFixed(0) ?? '—'} and ${ind.macd.momentum} MACD momentum — rule-based rating: <b>${rec.rating}</b>.`);
@@ -254,7 +257,7 @@ const App = (() => {
       const el = document.getElementById(`${prefix}${key}`);
       if (!el) continue;
       try {
-        const chart = await API.chart(c.id, c.symbol, 90, 'usd');
+        const chart = await API.chart(c.id, c.symbol, IND_DAYS, 'usd');
         const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
         const rec = Recommend.recommend(ind, fngNow);
         state.recs[key] = { rec, name: c.name, sym: (c.symbol || '').toUpperCase() };
@@ -469,7 +472,7 @@ const App = (() => {
       for (const c of markets) {
         if (!isCurrent(tok)) return;
         try {
-          const chart = await API.chart(c.id, c.symbol, 90, cur);
+          const chart = await API.chart(c.id, c.symbol, IND_DAYS, cur);
           const prices = chart.prices.map(p => p[1]);
           const vols = chart.total_volumes.map(v => v[1]);
           const ind = Indicators.analyze(prices, vols);
@@ -502,7 +505,7 @@ const App = (() => {
     el.innerHTML = `<div class="skeleton h-4 w-40"></div>`;
     try {
       const cur = state.currency;
-      const [chart, fngNow] = await Promise.all([API.chart(id, state.symbols[id], 90, cur), getFng()]);
+      const [chart, fngNow] = await Promise.all([API.chart(id, state.symbols[id], IND_DAYS, cur), getFng()]);
       const prices = chart.prices.map(p => p[1]);
       const vols = chart.total_volumes.map(v => v[1]);
       const ind = Indicators.analyze(prices, vols);
@@ -931,7 +934,7 @@ const App = (() => {
         else if (a.cond === 'change_above') hit = (m.price_change_percentage_24h ?? -Infinity) > a.threshold;
         else if (a.cond === 'rsi_above' || a.cond === 'rsi_below') {
           try {
-            const chart = await API.chart(a.coinId, COIN_META[a.coinId]?.symbol || m.symbol, 90, 'usd');
+            const chart = await API.chart(a.coinId, COIN_META[a.coinId]?.symbol || m.symbol, IND_DAYS, 'usd');
             const ind = Indicators.analyze(chart.prices.map(p => p[1]), chart.total_volumes.map(v => v[1]));
             if (ind.rsi != null) hit = a.cond === 'rsi_above' ? ind.rsi > a.threshold : ind.rsi < a.threshold;
           } catch {}
@@ -1081,19 +1084,23 @@ const App = (() => {
         const meta = COIN_META[id];
         if (!meta) throw e;
         const [chartLite, fngLite] = await Promise.all([
-          API.chart(id, meta.symbol, 90, 'usd'), getFng().catch(() => [])
+          API.chart(id, meta.symbol, IND_DAYS, 'usd'), getFng().catch(() => [])
         ]);
         if (!isCurrent(tok)) return;
         renderCoinLite(id, meta, chartLite, fngLite, tok);
         return;
       }
-      const [chart90, fng] = await Promise.all([
-        API.chart(id, coin.symbol, 90, cur), getFng()
+      // Full 220d series for indicators (EMA200 needs 200 closes); the visible chart below
+      // still starts at the default 90d range for a tighter view.
+      const [chartInd, fng] = await Promise.all([
+        API.chart(id, coin.symbol, IND_DAYS, cur), getFng()
       ]);
       if (!isCurrent(tok)) return;
-      const prices90 = chart90.prices.map(p => p[1]);
-      const vols90 = chart90.total_volumes.map(v => v[1]);
-      const ind = Indicators.analyze(prices90, vols90);
+      const pricesInd = chartInd.prices.map(p => p[1]);
+      const volsInd = chartInd.total_volumes.map(v => v[1]);
+      const ind = Indicators.analyze(pricesInd, volsInd);
+      // Slice to ~90d for the default preloaded chart display
+      const chart90 = { prices: chartInd.prices.slice(-90), total_volumes: chartInd.total_volumes.slice(-90), candles: chartInd.candles ? chartInd.candles.slice(-90) : undefined };
       const rec = Recommend.recommend(ind, fng[0]?.v ?? null);
       const m = coin.market_data;
       const price = m.current_price[cur];
@@ -1195,14 +1202,16 @@ const App = (() => {
   }
 
   /** Lite coin view when CoinGecko is rate-limited: Binance chart + indicators + AI rec. */
-  function renderCoinLite(id, meta, chart90, fng, tok) {
+  function renderCoinLite(id, meta, chartInd, fng, tok) {
     try {
       const cur = 'usd';
-      const prices90 = chart90.prices.map(p => p[1]);
-      const vols90 = chart90.total_volumes.map(v => v[1]);
-      const ind = Indicators.analyze(prices90, vols90);
+      const pricesInd = chartInd.prices.map(p => p[1]);
+      const volsInd = chartInd.total_volumes.map(v => v[1]);
+      const ind = Indicators.analyze(pricesInd, volsInd);
       const rec = Recommend.recommend(ind, fng[0]?.v ?? null);
-      const price = prices90[prices90.length - 1];
+      const price = pricesInd[pricesInd.length - 1];
+      // ~90d slice for the default chart display
+      const chart90 = { prices: chartInd.prices.slice(-90), total_volumes: chartInd.total_volumes.slice(-90), candles: chartInd.candles ? chartInd.candles.slice(-90) : undefined };
       const sym = meta.symbol.toUpperCase();
       const stat = (label, val) => `<div class="glass p-3.5"><div class="text-[10px] text-dim uppercase tracking-wider">${label}</div><div class="text-sm text-head font-medium mt-0.5">${val}</div></div>`;
       viewEl().innerHTML = `

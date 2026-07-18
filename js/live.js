@@ -7,6 +7,10 @@
  * App calls Live.scan() after each render to (re)collect elements.
  */
 const Live = (() => {
+  // Primary stream host is geo-blocked (451) in some regions; the data-stream.binance.vision
+  // mirror is tried first, with the main host as fallback. A failing host is skipped next time.
+  const WS_HOSTS = ['wss://data-stream.binance.vision/ws/!miniTicker@arr', 'wss://stream.binance.com:9443/ws/!miniTicker@arr'];
+  let hostIdx = 0;
   let ws = null;
   let retry = 1000;
   let priceEls = {};
@@ -32,7 +36,8 @@ const Live = (() => {
 
   function connect() {
     try {
-      ws = new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr');
+      const url = WS_HOSTS[hostIdx % WS_HOSTS.length];
+      ws = new WebSocket(url);
       ws.onopen = () => { retry = 1000; };
       ws.onmessage = (ev) => {
         let arr;
@@ -64,7 +69,7 @@ const Live = (() => {
           }
         }
       };
-      ws.onclose = () => { ws = null; setTimeout(ensureSocket, retry); retry = Math.min(retry * 2, 30000); };
+      ws.onclose = () => { ws = null; hostIdx++; setTimeout(ensureSocket, retry); retry = Math.min(retry * 2, 30000); };
       ws.onerror = () => { try { ws.close(); } catch {} };
     } catch { ws = null; }
   }

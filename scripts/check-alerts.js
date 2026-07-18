@@ -16,7 +16,9 @@ const ROOT = path.join(__dirname, '..');
 const CONFIG_PATH = path.join(ROOT, 'alerts.json');
 const STATE_PATH = path.join(ROOT, '.alerts-state.json');
 
-const BINANCE_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
+// data-api.binance.vision (keyless mirror) first — api.binance.com returns 451 in some regions
+// (incl. GitHub Actions US runners).
+const BINANCE_HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
 
 async function fetchJson(url, opts) {
   const res = await fetch(url, opts);

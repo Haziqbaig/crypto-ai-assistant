@@ -1,6 +1,6 @@
 {
-  "_comment": "24/7 price alerts checked by GitHub Actions (.github/workflows/price-alerts.yml). Edit this file, commit, done. symbol = Binance ticker (BTC, ETH, SOL...). cond = price_above | price_below | change_above | change_below (24h %). Baseline: SOL was $76.04 on 2026-07-13 when these +/- $6 alerts were set.",
-  "email": "haziq.baig319@gmail.com",
+  "_comment": "24/7 price alerts checked by GitHub Actions (.github/workflows/price-alerts.yml). Edit this file, commit, done. symbol = Binance ticker (BTC, ETH, SOL...). cond = price_above | price_below | change_above | change_below (24h %). Baseline: SOL was $76.04 on 2026-07-13 when these +/- $6 alerts were set. NOTE: set your notification email via the ALERT_EMAIL GitHub Actions secret (Settings -> Secrets -> Actions) instead of committing it here — the script reads process.env.ALERT_EMAIL first.",
+  "email": "",
   "alerts": [
     { "id": "sol-down-6-from-76", "symbol": "SOL", "cond": "price_below", "threshold": 70.04 },
     { "id": "sol-up-6-from-76", "symbol": "SOL", "cond": "price_above", "threshold": 82.04 }

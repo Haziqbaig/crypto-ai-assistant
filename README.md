@@ -16,6 +16,11 @@ Premium, dark-mode-first crypto dashboard with client-side technical analysis an
 ## Data
 CoinGecko public API + Alternative.me Fear & Greed (free, no keys). Responses cached in localStorage (60s–1h TTL) with stale-fallback and retry to respect rate limits.
 
+> **Binance access:** live prices, charts and 24h tickers use the keyless `data-api.binance.vision` mirror **first** (`api.binance.com` returns HTTP 451 in geo-restricted regions such as the US), with automatic fallback. Blocked hosts are detected at runtime and skipped for the rest of the session.
+
+## Alerts email (privacy)
+The 24/7 alert watcher reads the notification address from the **`ALERT_EMAIL`** GitHub Actions secret (`Settings → Secrets and variables → Actions`). Do **not** commit your email in `alerts.json` — leave `"email": ""` and set the secret instead.
+
 ## Architecture
 ```
 index.html        — shell, Tailwind CDN config, glassmorphism styles
